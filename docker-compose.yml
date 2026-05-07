@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: dha_mysql
+    restart: always
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-smart_queue}
+      MYSQL_USER: ${DB_USER:-dha_user}
+      MYSQL_PASSWORD: ${DB_PASS:-dhapassword}
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:-dhapassword}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: dha_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dha_backend
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-smart_queue}
+      DB_USER: ${DB_USER:-dha_user}
+      DB_PASS: ${DB_PASS:-dhapassword}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production-256-bit}
+      JWT_EXPIRY: ${JWT_EXPIRY:-86400000}
+      ML_SERVICE_URL: http://ml-service:8001
+      FRONTEND_URL: http://localhost:5173
+    ports:
+      - "8080:8080"
+
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    container_name: dha_ml
+    restart: always
+    ports:
+      - "8001:8001"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dha_frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    environment:
+      VITE_API_URL: http://localhost:8080
+      VITE_WS_URL: ws://localhost:8080
+
+volumes:
+  mysql_data:
+  redis_data:
