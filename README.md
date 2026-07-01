@@ -1,6 +1,6 @@
 # 🇿🇦 Smart Queue Platform — DHA eHomeAffairs Style
 
-> A production-ready South African smart queue management system inspired by the Department of Home Affairs (DHA), SARS eFiling, and Discovery Health portals.
+> A production-ready South African smart queue management system inspired by the Department of Home Affairs (DHA), with **Zero Trust security** (JWT + 2FA + Face Verification on every request).
 
 ---
 
@@ -9,6 +9,7 @@
 This platform enables South African citizens to:
 - Authenticate securely with OTP verification
 - Verify identity using SA ID numbers
+- **Enrol and verify their face via DeepFace biometrics**
 - Join virtual queues at DHA branches
 - Receive real-time queue status via WebSocket
 - Upload and validate documents before branch visits
@@ -24,7 +25,8 @@ This platform enables South African citizens to:
 smart-queue-platform/
 ├── frontend/          # React + TypeScript + Tailwind CSS
 ├── backend/           # Spring Boot + Java + JWT + WebSocket
-├── ml-service/        # Python FastAPI (wait-time + OCR)
+├── face-service/      # Python FastAPI + DeepFace (Facenet512)
+├── ml-service/        # Python FastAPI (wait-time prediction)
 ├── docker-compose.yml
 ├── .env
 └── README.md
@@ -32,25 +34,94 @@ smart-queue-platform/
 
 ### Tech Stack
 
-| Layer       | Technology                                    |
-|-------------|-----------------------------------------------|
-| Frontend    | React 18, TypeScript, Tailwind CSS, Zustand   |
-| Backend     | Spring Boot 3, Spring Security, JWT, WebSocket|
-| Database    | MySQL 8                                       |
-| Cache       | Redis 7                                       |
-| ML Service  | Python 3.11, FastAPI, Uvicorn                 |
-| Realtime    | STOMP over WebSocket                          |
+| Layer        | Technology                                                  |
+|--------------|-------------------------------------------------------------|
+| Frontend     | React 18, TypeScript, Tailwind CSS, Zustand                 |
+| Backend      | Spring Boot 3.5, Spring Security, JWT, WebSocket            |
+| Database     | MySQL 8                                                     |
+| Cache        | Redis 7                                                     |
+| Face Service | Python 3.11, FastAPI, DeepFace (Facenet512), OpenCV         |
+| ML Service   | Python 3.11, FastAPI, Uvicorn                               |
+| Realtime     | STOMP over WebSocket                                        |
+
+---
+
+## Zero Trust Security Architecture
+
+Every protected API call passes **three sequential gates**:
+
+```
+React makes API call
+        ↓
+Spring Boot ZeroTrustFilter intercepts
+        ↓
+Gate 1: JWT valid?            ──── NO ──→  401 Unauthorized
+        ↓ YES
+Gate 2: Redis has 2fa:{userId}? ── NO ──→  403 + redirect to 2FA
+        ↓ YES
+Gate 3: Redis has face:{userId}? ─ NO ──→  403 + open face scan modal
+        ↓ YES (and not expired)
+API call proceeds ✅
+```
+
+### Session Lifetimes
+
+| Session      | TTL       | Storage           |
+|--------------|-----------|-------------------|
+| JWT token    | 24 hours  | localStorage      |
+| 2FA session  | 8 hours   | Redis `2fa:{uid}` |
+| Face session | 4 hours   | Redis `face:{uid}`|
+
+### Frontend Enforcement
+
+`ProtectedLayout` checks session validity client-side before any page load:
+
+```
+isAuthenticated?  →  NO  → /login
+isTwoFaValid()?   →  NO  → /verify-otp?session=true
+isFaceValid()?    →  NO  → /verify-face?mode=verify
+```
+
+The Axios response interceptor also handles mid-session expiry:
+- `403 REQUIRES_2FA` → logout + redirect to `/login?reason=session_expired`
+- `403 REQUIRES_FACE` → open `FaceScanModal` inline, retry the original request on success
+
+### User Onboarding Flow
+
+```
+Register → OTP Verify (sets 2fa:{uid}) → SA ID Verify → Face Enrol (sets face:{uid}) → Home ✅
+```
+
+### Session Renewal Flow (returning users)
+
+```
+Login → ProtectedLayout → /verify-otp?session=true → /verify-face?mode=verify → Home ✅
+```
+
+### Face Verification Service
+
+Built with **DeepFace (Facenet512)** + cosine similarity:
+
+| Endpoint     | Description                                          |
+|--------------|------------------------------------------------------|
+| `POST /enroll` | Extract 512-dim embedding from image, store in Redis |
+| `POST /verify` | Compare live capture vs stored embedding             |
+| `GET  /health` | Health check                                         |
+
+- Threshold: cosine distance ≤ **0.30** (strict mode)
+- Embeddings stored in Redis key: `face-embedding:{userId}`
+- Spring Boot calls face service and, on success, writes `face:{userId}` (4h TTL) to Redis
 
 ---
 
 ## Prerequisites
 
-- Java 17+
+- Java 21+
 - Node.js 18+
 - Python 3.11+
-- Docker + Docker Compose (recommended)
 - MySQL 8
-- Redis 7
+- Redis 7 (see setup below)
+- Docker + Docker Compose (optional — for containerised deployments)
 
 ---
 
@@ -63,7 +134,7 @@ Create `.env` in the root:
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=smart_queue
-DB_USER=root
+DB_USER=dha_user
 DB_PASS=yourpassword
 
 # Redis
@@ -77,8 +148,52 @@ JWT_EXPIRY=86400000
 # ML Service
 ML_SERVICE_URL=http://localhost:8001
 
+# Face Verification Service (DeepFace)
+FACE_SERVICE_URL=http://localhost:8002
+FACE_DEV_BYPASS=false          # Set true to skip face checks in local dev
+FACE_SESSION_TTL_HOURS=4
+TWO_FA_TTL_HOURS=8
+
 # CORS
 FRONTEND_URL=http://localhost:5173
+```
+
+> Set `FACE_DEV_BYPASS=true` during local development if you don't want to run the face service.
+
+---
+
+## Redis Setup
+
+### Linux / macOS
+```bash
+sudo apt install redis-server   # Ubuntu/Debian
+brew install redis              # macOS
+redis-server
+```
+
+### Windows (no Docker)
+Redis is not officially supported on Windows. Use the community Windows port:
+
+```powershell
+# Download portable binary (one-time)
+$dir = "$env:LOCALAPPDATA\Redis"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest -Uri "https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip" -OutFile "$dir\redis.zip"
+Expand-Archive "$dir\redis.zip" -DestinationPath $dir -Force
+
+# Start Redis (run this every time before starting the backend)
+& "$env:LOCALAPPDATA\Redis\redis-server.exe"
+```
+
+To install as a Windows service (requires admin, run once):
+```powershell
+& "$env:LOCALAPPDATA\Redis\redis-server.exe" --service-install redis.windows.conf --service-name Redis
+Start-Service Redis
+```
+
+Verify Redis is running:
+```bash
+redis-cli ping   # should return PONG
 ```
 
 ---
@@ -100,7 +215,6 @@ Tables are auto-created by Hibernate on startup (`ddl-auto: update`).
 
 ```bash
 cd backend
-cp ../. env .env
 mvn clean install -DskipTests
 mvn spring-boot:run
 ```
@@ -117,7 +231,44 @@ npm install
 npm run dev
 ```
 
-Frontend runs on **http://localhost:5173**
+Frontend runs on **http://localhost:3000**
+
+---
+
+## Startup Order
+
+Services must start in this order to avoid connection errors:
+
+```
+1. MySQL       (must be running before backend starts)
+2. Redis       (must be running before backend starts)
+3. Backend     mvn spring-boot:run           → http://localhost:8080
+4. Face Service  python main.py              → http://localhost:8002
+5. ML Service    uvicorn app.main:app ...    → http://localhost:8001
+6. Frontend    npm run dev                   → http://localhost:3000
+```
+
+> The face service and ML service are optional for local dev — set `FACE_DEV_BYPASS=true` in `.env` to skip face checks without running the Python services.
+
+---
+
+## Face Service Setup (DeepFace)
+
+```bash
+cd face-service
+python -m venv venv
+# Windows:
+venv\Scripts\activate
+# macOS/Linux:
+source venv/bin/activate
+
+pip install -r requirements.txt
+python main.py
+```
+
+Face service runs on **http://localhost:8002**
+
+> First run downloads the Facenet512 model (~90 MB). Subsequent starts are instant.
 
 ---
 
@@ -126,12 +277,10 @@ Frontend runs on **http://localhost:5173**
 ```bash
 cd ml-service
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate   # or venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8001
 ```
-
-ML service runs on **http://localhost:8001**
 
 ---
 
@@ -141,53 +290,65 @@ ML service runs on **http://localhost:8001**
 docker-compose up --build
 ```
 
-This starts MySQL, Redis, Backend, Frontend, and ML service.
+Starts MySQL, Redis, Backend, Frontend, Face Service, and ML service.
 
 ---
 
 ## API Endpoints
 
 ### Auth
-| Method | Endpoint                      | Description              |
-|--------|-------------------------------|--------------------------|
-| POST   | `/api/auth/register`          | Register new citizen     |
-| POST   | `/api/auth/login`             | Login, receive JWT       |
-| POST   | `/api/auth/send-otp`          | Send OTP to phone/email  |
-| POST   | `/api/auth/verify-otp`        | Verify OTP code          |
-| POST   | `/api/auth/verify-id`         | Validate SA ID number    |
+| Method | Endpoint                        | Description                    |
+|--------|---------------------------------|--------------------------------|
+| POST   | `/api/auth/register`            | Register new citizen           |
+| POST   | `/api/auth/login`               | Login, receive JWT             |
+| POST   | `/api/auth/send-otp`            | Send OTP to phone/email        |
+| POST   | `/api/auth/verify-otp`          | Verify OTP → grants 2FA session|
+| POST   | `/api/auth/verify-id`           | Validate SA ID number          |
+| POST   | `/api/auth/face/enroll`         | Enrol face (first-time setup)  |
+| POST   | `/api/auth/face/verify`         | Verify face → grants face session |
 
 ### Users
-| Method | Endpoint                      | Description              |
-|--------|-------------------------------|--------------------------|
-| GET    | `/api/users/me`               | Get current user profile |
-| PUT    | `/api/users/me`               | Update profile           |
+| Method | Endpoint       | Description              |
+|--------|----------------|--------------------------|
+| GET    | `/api/auth/me` | Get current user profile |
 
 ### Branches
-| Method | Endpoint                      | Description              |
-|--------|-------------------------------|--------------------------|
-| GET    | `/api/branches`               | List all branches        |
-| GET    | `/api/branches/{id}`          | Branch details + wait    |
-| GET    | `/api/branches/nearby`        | Branches near location   |
+| Method | Endpoint               | Description              |
+|--------|------------------------|--------------------------|
+| GET    | `/api/branches`        | List all branches        |
+| GET    | `/api/branches/{id}`   | Branch details + wait    |
+| GET    | `/api/branches/nearby` | Branches near location   |
 
 ### Queue
-| Method | Endpoint                          | Description              |
-|--------|-----------------------------------|--------------------------|
-| POST   | `/api/queue/join`                 | Join a queue             |
-| GET    | `/api/queue/my-ticket`            | Current ticket status    |
-| DELETE | `/api/queue/{ticketId}/cancel`    | Cancel queue entry       |
-| GET    | `/api/queue/branch/{branchId}`    | Branch queue snapshot    |
+| Method | Endpoint                           | Description              |
+|--------|------------------------------------|--------------------------|
+| POST   | `/api/queue/join`                  | Join a queue             |
+| GET    | `/api/queue/my-ticket`             | Current ticket status    |
+| DELETE | `/api/queue/{ticketId}/cancel`     | Cancel queue entry       |
+| GET    | `/api/queue/branch/{branchId}`     | Branch queue snapshot    |
 
 ### Documents
-| Method | Endpoint                      | Description              |
-|--------|-------------------------------|--------------------------|
-| POST   | `/api/documents/upload`       | Upload document          |
-| GET    | `/api/documents/my-docs`      | List user documents      |
-| DELETE | `/api/documents/{id}`         | Delete document          |
+| Method | Endpoint                   | Description              |
+|--------|----------------------------|--------------------------|
+| POST   | `/api/documents/upload`    | Upload document          |
+| GET    | `/api/documents/my-docs`   | List user documents      |
+| DELETE | `/api/documents/{id}`      | Delete document          |
 
 ### Feedback
-| Method | Endpoint                      | Description              |
-|--------|-------------------------------|--------------------------|
-| POST   | `/api/feedback`               | Submit service feedback  |
+| Method | Endpoint        | Description              |
+|--------|-----------------|--------------------------|
+| POST   | `/api/feedback` | Submit service feedback  |
+
+---
+
+## Zero Trust Error Codes
+
+| HTTP | Code              | Frontend Action                          |
+|------|-------------------|------------------------------------------|
+| 401  | `INVALID_TOKEN`   | Logout + redirect to `/login`            |
+| 403  | `REQUIRES_2FA`    | Logout + redirect to `/login?reason=session_expired` |
+| 403  | `REQUIRES_FACE`   | Open `FaceScanModal`, retry on success   |
+| 400  | `NO_ENROLLMENT`   | Redirect to `/verify-face?mode=enroll`   |
 
 ---
 
@@ -195,49 +356,20 @@ This starts MySQL, Redis, Backend, Frontend, and ML service.
 
 Connect to: `ws://localhost:8080/ws`
 
-| Topic                              | Description                          |
-|------------------------------------|--------------------------------------|
-| `/topic/branch/{branchId}/queue`   | Live queue updates for a branch      |
-| `/topic/user/{userId}/status`      | Personal ticket status updates       |
-| `/app/queue/join`                  | Send: join queue action              |
+| Topic                               | Description                          |
+|-------------------------------------|--------------------------------------|
+| `/topic/branch/{branchId}/queue`    | Live queue updates for a branch      |
+| `/topic/user/{userId}/status`       | Personal ticket status updates       |
 
 ---
 
-## ML Service Endpoints
+## Face Service Endpoints
 
-| Method | Endpoint                  | Description                    |
-|--------|---------------------------|--------------------------------|
-| POST   | `/predict/wait-time`      | Predict wait time for queue    |
-| POST   | `/validate/document`      | Validate uploaded document     |
-| GET    | `/health`                 | ML service health check        |
-
-### Wait Time Calculation (Lightweight)
-Currently computed as:
-```
-wait_minutes = (queue_size × avg_service_time_minutes) / active_counters
-```
-Designed to be swapped with a trained regression model in Phase 3.
-
-### Document Validation (Lightweight)
-Currently:
-1. MIME type validation (PDF, JPG, PNG)
-2. File size check (max 10MB)
-3. SA ID regex pattern check on extracted text
-4. Certified copy keyword detection
-
-Designed for full OCR/CV pipeline in Phase 3.
-
----
-
-## Placeholder Services Explained
-
-| Service              | Current Implementation       | Future Replacement              |
-|----------------------|------------------------------|---------------------------------|
-| Wait Time            | Formula-based calculation    | ML regression model             |
-| Document OCR         | MIME + regex validation      | Tesseract / AWS Textract        |
-| Face Verification    | Camera capture only          | DeepFace / AWS Rekognition      |
-| SMS OTP              | Console log (dev mode)       | Twilio / Africa's Talking       |
-| Push Notifications   | WebSocket only               | Firebase FCM                    |
+| Method | Endpoint   | Description                        |
+|--------|------------|------------------------------------|
+| POST   | `/enroll`  | Store reference face embedding     |
+| POST   | `/verify`  | Verify face vs stored embedding    |
+| GET    | `/health`  | Service + Redis health check       |
 
 ---
 
@@ -247,10 +379,7 @@ South African ID numbers follow `YYMMDD SSSS C A Z`:
 - `YYMMDD` — Date of birth
 - `SSSS` — Gender (0000–4999 Female, 5000–9999 Male)
 - `C` — Citizenship (0 = SA, 1 = Permanent Resident)
-- `A` — Usually 8 (old), 0 (new)
 - `Z` — Luhn checksum digit
-
-Validation uses the Luhn algorithm.
 
 ---
 
@@ -258,48 +387,31 @@ Validation uses the Luhn algorithm.
 
 ```
 WAITING → CALLED → SERVING → COMPLETE
-                ↓
-             CANCELLED
+               ↓
+            CANCELLED
 ```
 
 ---
 
-## Future ML Integration Notes
+## Deployment Checklist
 
-- **Phase 3**: Train XGBoost or LightGBM model on historical queue data
-- **Features**: time_of_day, day_of_week, branch_capacity, active_counters, service_type
-- **Output**: predicted_wait_minutes (regression)
-- **Deployment**: Replace `/predict/wait-time` endpoint with model inference
-- **Face Verification**: Integrate DeepFace library with stored biometric templates
-
----
-
-## Deployment Notes
-
-### Production Checklist
-- [ ] Set strong `JWT_SECRET` (min 256-bit)
+- [ ] Set strong `JWT_SECRET` (min 256-bit random)
+- [ ] Set `FACE_DEV_BYPASS=false` in production
 - [ ] Use SSL/TLS (reverse proxy via Nginx)
 - [ ] Replace `ddl-auto: update` with `validate` + Flyway migrations
 - [ ] Configure Redis with AUTH password
 - [ ] Set up Africa's Talking or Twilio for real SMS OTP
-- [ ] Configure Firebase FCM for push notifications
-- [ ] Enable CORS only for production domain
-- [ ] Set up log aggregation (ELK stack or CloudWatch)
+- [ ] Lock CORS to production domain only
+- [ ] Enable face session revocation on suspicious activity
 
 ---
 
 ## Compliance
 
 - **POPIA** (Protection of Personal Information Act) compliant architecture
-- All biometric data encrypted at rest
-- User consent required before data collection
-- Data deletion endpoints available
-
----
-
-## Screenshots
-
-See `/docs/screenshots/` for UI reference mockups.
+- Biometric embeddings encrypted at rest in Redis
+- Face images never persisted — only 512-dim vectors stored
+- Zero Trust ensures even a stolen JWT cannot access the system without 2FA + face
 
 ---
 
@@ -307,4 +419,4 @@ See `/docs/screenshots/` for UI reference mockups.
 
 Academic / University Submission — Department of Home Affairs Smart Queue Platform  
 Built for: University Submission — Smart Systems  
-Year: 2024
+Year: 2026

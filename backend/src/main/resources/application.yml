@@ -39,6 +39,13 @@ app:
   otp:
     expiry-minutes: 5
     length: 6
+  face:
+    service-url: ${FACE_SERVICE_URL:http://localhost:8002}
+    session-ttl-hours: ${FACE_SESSION_TTL_HOURS:4}
+    dev-bypass: ${FACE_DEV_BYPASS:true}
+  zero-trust:
+    two-fa-ttl-hours: ${TWO_FA_TTL_HOURS:8}
+    dev-bypass: ${ZERO_TRUST_BYPASS:true}
 
 logging:
   level:
