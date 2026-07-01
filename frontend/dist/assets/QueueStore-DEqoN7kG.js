@@ -1,0 +1,1 @@
+import{h as a}from"./index-Cav3SvLq.js";const i=a(t=>({myTicket:null,liveBroadcast:null,history:[],setMyTicket:e=>t({myTicket:e}),setLiveBroadcast:e=>t({liveBroadcast:e}),setHistory:e=>t({history:e}),clearTicket:()=>t({myTicket:null,liveBroadcast:null})}));export{i as u};
