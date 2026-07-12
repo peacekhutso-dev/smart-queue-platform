@@ -6,17 +6,17 @@ import App from './App'
 import './Index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
     <BrowserRouter>
-      <App />
-      <Toaster
-        position="top-center"
-        toastOptions={{
-          duration: 3000,
-          style: { borderRadius: '12px', fontFamily: 'Inter, sans-serif' },
-          success: { iconTheme: { primary: '#1DB954', secondary: '#fff' } },
-        }}
-      />
+      <div className="min-h-screen bg-gray-100">
+        <App />
+        <Toaster
+          position="top-center"
+          toastOptions={{
+            duration: 3000,
+            style: { borderRadius: '12px', fontFamily: 'Inter, sans-serif' },
+            success: { iconTheme: { primary: '#1DB954', secondary: '#fff' } },
+          }}
+        />
+      </div>
     </BrowserRouter>
-  </React.StrictMode>
 )

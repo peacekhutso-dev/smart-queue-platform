@@ -87,7 +87,7 @@ export default function FaceVerifyPage() {
         setTimeout(() => navigate(returnTo, { replace: true }), 800)
       } else {
         toast.success('Face enrolled successfully!')
-        setTimeout(() => navigate('/home', { replace: true }), 800)
+        setTimeout(() => navigate('/applicant-type', { replace: true }), 800)
       }
     } catch (err: unknown) {
       const errData = (err as { response?: { data?: { data?: { code?: string }; message?: string } } })?.response?.data

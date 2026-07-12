@@ -11,7 +11,7 @@ const navItems = [
 
 export default function BottomNav() {
   return (
-    <nav className="sticky bottom-0 bg-white border-t border-gray-100 px-2 py-2 z-10">
+    <nav className="md:hidden sticky bottom-0 bg-white border-t border-gray-100 px-2 py-2 z-10">
       <div className="flex items-center justify-around">
         {navItems.map(({ to, icon: Icon, label }) => (
           <NavLink

@@ -1,0 +1,39 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: verification-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+app:
+  face:
+    service-url: ${FACE_SERVICE_URL:http://localhost:8002}
+    session-ttl-hours: ${FACE_SESSION_TTL_HOURS:4}
+    dev-bypass: ${FACE_DEV_BYPASS:true}
+  luxand:
+    base-url: ${LUXAND_BASE_URL:https://api.luxand.cloud}
+    api-key: ${LUXAND_API_KEY:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
+
+logging:
+  level:
+    com.dha.verification: DEBUG

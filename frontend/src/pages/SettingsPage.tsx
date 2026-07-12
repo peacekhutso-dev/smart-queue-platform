@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   User, FileText, ChevronRight, LogOut, Shield,
-  Bell, Globe, Upload, Trash2, RefreshCw, AlertCircle, ArrowLeft
+  Bell, Globe, Upload, Trash2, AlertCircle, ArrowLeft
 } from 'lucide-react'
+import { DocumentListSkeleton } from '../components/Skeleton'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/AuthStore'
 import { documentService } from '../api/Api'
@@ -115,7 +116,7 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white flex items-center justify-between px-5 py-4 border-b border-gray-100">
+      <div className="bg-white flex items-center justify-between px-5 h-20 border-b border-gray-100">
         <button
           onClick={() => navigate(-1)}
           className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-gray-100 transition-colors"
@@ -160,7 +161,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      <div className="px-5 py-4 flex flex-col gap-4 pb-24 flex-1">
+      <div className="px-5 md:px-8 py-4 md:py-6 flex flex-col gap-4 pb-8 flex-1 max-w-3xl mx-auto w-full">
 
         {/* ── PROFILE TAB ── */}
         {activeTab === 'profile' && (
@@ -231,12 +232,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Docs list */}
-            {docsLoading && (
-              <div className="flex items-center justify-center py-8 text-gray-400 gap-2">
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span className="text-sm">Loading documents…</span>
-              </div>
-            )}
+            {docsLoading && <DocumentListSkeleton />}
 
             {docsError && !docsLoading && (
               <div className="flex flex-col items-center gap-3 py-6 text-center">

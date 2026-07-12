@@ -12,7 +12,7 @@ export default function QueueStatusPage() {
 
   if (!ticket) {
     return (
-      <div className="flex flex-col min-h-screen items-center justify-center px-8 text-center gap-4">
+      <div className="flex flex-col min-h-screen items-center justify-center px-5 text-center gap-4">
         <p className="text-gray-500">No active queue session.</p>
         <button
           onClick={() => navigate('/home')}
@@ -34,7 +34,7 @@ export default function QueueStatusPage() {
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white flex items-center justify-between px-5 py-4 border-b border-gray-100">
+      <div className="bg-white flex items-center justify-between px-5 h-20 border-b border-gray-100">
         <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center">
           <Shield className="w-5 h-5 text-white" />
         </div>
@@ -43,7 +43,7 @@ export default function QueueStatusPage() {
       </div>
 
       {/* Step progress */}
-      <div className="bg-white px-5 py-4 border-b border-gray-100 flex items-center">
+      <div className="bg-white px-5 h-20 border-b border-gray-100 flex items-center">
         {STEPS.map((step, i) => (
           <div key={step} className="flex items-center flex-1">
             <div className="flex flex-col items-center gap-1">
@@ -71,7 +71,7 @@ export default function QueueStatusPage() {
         ))}
       </div>
 
-      <div className="px-5 py-4 flex flex-col gap-4 pb-24">
+      <div className="px-5 md:px-8 py-4 md:py-6 flex flex-col gap-4 pb-8 max-w-4xl mx-auto w-full">
         {/* Now calling banner */}
         <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3">
           <div className="w-8 h-8 bg-orange-400 rounded-full flex items-center justify-center shrink-0">
@@ -116,7 +116,7 @@ export default function QueueStatusPage() {
         </div>
 
         {/* Info grid */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-white border border-gray-200 rounded-2xl p-4 flex flex-col gap-1">
             <div className="flex items-center gap-1.5 text-gray-400">
               <MapPin className="w-3.5 h-3.5" />

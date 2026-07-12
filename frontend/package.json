@@ -10,6 +10,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "@react-google-maps/api": "^2.20.8",
     "@stomp/stompjs": "^7.0.0",
     "axios": "^1.16.1",
     "clsx": "^2.1.0",
@@ -24,6 +25,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@types/google.maps": "^3.65.2",
     "@types/node": "^25.8.0",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",

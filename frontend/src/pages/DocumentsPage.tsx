@@ -1,347 +1,478 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Upload, FileText, Trash2, RefreshCw, CheckCircle,
-  AlertCircle, Camera, Image, ChevronRight, MapPin, Sparkles
+  Upload, FileText, CheckCircle, AlertCircle,
+  ChevronRight, MapPin, X, Clock, RotateCcw, Archive,
 } from 'lucide-react'
-import axios from '../api/Axios'
+import axiosInstance from '../api/Axios'
+import { documentService } from '../api/Api'
+import { useQueueStore } from '../store/QueueStore'
+import { useCatalogStore } from '../store/CatalogStore'
+import BranchPicker from '../components/BranchPicker'
+import type { Document, ServiceCode } from '../types'
 
-const SERVICE_LABELS: Record<string, string> = {
-  SMART_ID:             'Smart ID Card Application',
-  PASSPORT:             'Passport Application',
-  BIRTH_CERTIFICATE:    'Birth Certificate Application',
-  MARRIAGE_CERTIFICATE: 'Marriage Certificate Application',
-  GENERAL_ENQUIRY:      'General Enquiry',
+// ── Data ──────────────────────────────────────────────────────────────────────
+
+interface ReqDoc { label: string; docType: string; hint: string }
+
+// Bridges legacy uploaded-document rows (documentType values that predate
+// the fuller catalog category list) to the current required-document
+// category, so previously-uploaded documents still get suggested for reuse.
+const DOC_TYPE_ALIASES: Record<string, string[]> = {
+  SA_SMART_ID:                  ['SA_SMART_ID', 'SA_ID'],
+  GREEN_BARCODED_ID_BOOK:       ['GREEN_BARCODED_ID_BOOK', 'SA_ID'],
+  FOREIGN_PASSPORT:             ['FOREIGN_PASSPORT', 'PASSPORT'],
+  UTILITY_BILL:                 ['UTILITY_BILL', 'PROOF_OF_RESIDENCE'],
 }
 
-const REQUIRED_DOCS: Record<string, string[]> = {
-  SMART_ID:             ['SA ID / Birth Certificate', 'Proof of Residential Address', 'Certified Photo'],
-  PASSPORT:             ['SA ID Document', 'Proof of Residential Address', 'Passport Photo'],
-  BIRTH_CERTIFICATE:    ['Parent ID Documents', 'Hospital Birth Record', 'Proof of Residential Address'],
-  MARRIAGE_CERTIFICATE: ['Both Partners\' IDs', 'Marriage Certificate', 'Proof of Residential Address'],
-  GENERAL_ENQUIRY:      ['SA ID Document'],
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function timeAgo(iso: string): string {
+  const diff    = Date.now() - new Date(iso).getTime()
+  const seconds = Math.floor(diff / 1000)
+  if (seconds < 60)  return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60)  return `${minutes}m ago`
+  const hours   = Math.floor(minutes / 60)
+  if (hours < 24)    return `${hours}h ago`
+  const days    = Math.floor(hours / 24)
+  if (days < 7)      return `${days} day${days !== 1 ? 's' : ''} ago`
+  const weeks   = Math.floor(days / 7)
+  if (weeks < 5)     return `${weeks} week${weeks !== 1 ? 's' : ''} ago`
+  const months  = Math.floor(days / 30)
+  if (months < 12)   return `${months} month${months !== 1 ? 's' : ''} ago`
+  const years   = Math.floor(months / 12)
+  return `${years} year${years !== 1 ? 's' : ''} ago`
 }
 
-const DOC_TYPE_OPTIONS = [
-  { value: 'SA_ID',              label: 'SA ID Document' },
-  { value: 'BIRTH_CERTIFICATE',  label: 'Birth Certificate' },
-  { value: 'PROOF_OF_RESIDENCE', label: 'Proof of Residence' },
-  { value: 'PASSPORT',           label: 'Passport' },
-  { value: 'OTHER',              label: 'Other Document' },
-]
-
-interface UploadedDoc {
-  id: string
-  name: string
-  size: number
-  type: string
-  docType: string
-  status: 'uploading' | 'valid' | 'rejected' | 'in_review'
-  notes?: string
+function formatSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type SlotStatus = 'idle' | 'uploading' | 'valid' | 'rejected' | 'in_review' | 'saved'
+
+interface Slot {
+  req: ReqDoc
+  status: SlotStatus
+  progress: number
+  fileName?: string
+  fileSize?: number
+  uploadedAt?: string
+  savedDoc?: Document
+  usingSaved?: boolean
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function DocumentsPage() {
-  const navigate = useNavigate()
+  const navigate       = useNavigate()
   const [searchParams] = useSearchParams()
-  const serviceType = searchParams.get('serviceType') || 'SMART_ID'
+  const serviceType: ServiceCode = searchParams.get('serviceType') || ''
+  const setMyTicket    = useQueueStore((s) => s.setMyTicket)
+  const { applicantTypes, loaded, loadCatalog, selectedService } = useCatalogStore()
 
-  const [docs, setDocs]           = useState<UploadedDoc[]>([])
-  const [uploading, setUploading] = useState(false)
-  const [docType, setDocType]     = useState('SA_ID')
-  const fileInputRef              = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    loadCatalog()
+  }, [loadCatalog])
 
-  const serviceLabel  = SERVICE_LABELS[serviceType] || 'Service Application'
-  const requiredDocs  = REQUIRED_DOCS[serviceType]  || []
-  const step          = 2
-  const totalSteps    = 3
-  const progress      = Math.round((docs.filter(d => d.status === 'valid').length / Math.max(requiredDocs.length, 1)) * 65) + 10
+  // Prefer the service already selected on HomePage; fall back to looking it
+  // up by code (e.g. deep link / page refresh loses in-memory store state).
+  const service = useMemo(() => {
+    if (selectedService?.code === serviceType) return selectedService
+    return applicantTypes.flatMap(at => at.services).find(s => s.code === serviceType) ?? null
+  }, [selectedService, applicantTypes, serviceType])
+
+  const serviceLabel = service?.name ?? 'Service Application'
+  const requiredDocs: ReqDoc[] = useMemo(() => (service?.documents ?? []).map(d => ({
+    label: d.label,
+    docType: d.documentCategory,
+    hint: d.conditionNote ?? (d.required ? '' : 'optional'),
+  })), [service])
+
+  const [step, setStep]             = useState<'documents' | 'branch'>('documents')
+  const [slots, setSlots]           = useState<Slot[]>([])
+  const [savedLoading, setSavedLoading] = useState(true)
+
+  // (Re)build the slot list once the catalog's required-document list for
+  // this service is known — requiredDocs starts empty before the catalog
+  // loads — then annotate with any reusable previously-saved documents.
+  useEffect(() => {
+    const baseSlots: Slot[] = requiredDocs.map(req => ({ req, status: 'idle', progress: 0 }))
+    setSlots(baseSlots)
+    if (baseSlots.length === 0) { setSavedLoading(false); return }
+
+    setSavedLoading(true)
+    documentService.getMyDocs()
+      .then(res => {
+        const docs = res.data.data ?? []
+        setSlots(prev => prev.map(slot => {
+          const aliases = DOC_TYPE_ALIASES[slot.req.docType] ?? [slot.req.docType]
+          const match   = docs.find(d =>
+            aliases.some(a => a === d.documentType || a === d.docType) &&
+            d.validationStatus === 'VALID'
+          )
+          return match ? { ...slot, savedDoc: match } : slot
+        }))
+      })
+      .catch(() => {})
+      .finally(() => setSavedLoading(false))
+  }, [requiredDocs])
+
+  const fileInputRef  = useRef<HTMLInputElement>(null)
+  const activeSlot    = useRef<number>(-1)
+
+  const updateSlot = useCallback((i: number, patch: Partial<Slot>) => {
+    setSlots(s => s.map((slot, idx) => idx === i ? { ...slot, ...patch } : slot))
+  }, [])
+
+  const triggerUpload = (i: number) => {
+    activeSlot.current = i
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
+    const i    = activeSlot.current
+    if (!file || i < 0) return
 
-    const tempId = Date.now().toString()
-    const newDoc: UploadedDoc = {
-      id:      tempId,
-      name:    file.name,
-      size:    file.size,
-      type:    file.type,
-      docType: docType,
-      status:  'uploading',
-    }
+    updateSlot(i, {
+      status: 'uploading', progress: 0,
+      fileName: file.name, fileSize: file.size, usingSaved: false,
+    })
 
-    setDocs(prev => [...prev, newDoc])
-    setUploading(true)
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('documentType', slots[i].req.docType)
 
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('documentType', docType)
-
-      const token = localStorage.getItem('dha_token')
-      const res = await axios.post('/api/documents/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      const res = await axiosInstance.post('/documents/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (evt) => {
+          if (evt.total) {
+            updateSlot(i, { progress: Math.round((evt.loaded / evt.total) * 100) })
+          }
         },
       })
-
-      const data = res.data.data
-      setDocs(prev => prev.map(d => d.id === tempId ? {
-        ...d,
-        id:     String(data.id),
-        status: data.validationStatus === 'VALID' ? 'valid'
-              : data.validationStatus === 'REJECTED' ? 'rejected'
-              : 'in_review',
-        notes:  data.validationNotes,
-      } : d))
-    } catch (err) {
-      // If backend not available, simulate success for demo
-      setDocs(prev => prev.map(d => d.id === tempId ? {
-        ...d,
-        status: 'valid',
-        notes:  'Document received successfully.',
-      } : d))
-    } finally {
-      setUploading(false)
-      // Reset input so same file can be re-selected
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      const data   = res.data?.data
+      const status: SlotStatus =
+        data?.validationStatus === 'VALID'    ? 'valid' :
+        data?.validationStatus === 'REJECTED' ? 'rejected' : 'in_review'
+      updateSlot(i, { status, progress: 100, uploadedAt: new Date().toISOString() })
+    } catch {
+      // Simulate valid for demo when backend is down
+      updateSlot(i, { status: 'valid', progress: 100, uploadedAt: new Date().toISOString() })
     }
   }
 
-  const removeDoc = (id: string) => {
-    setDocs(prev => prev.filter(d => d.id !== id))
+  const useSaved = (i: number, doc: Document) => {
+    updateSlot(i, {
+      status: 'saved', usingSaved: true,
+      fileName: doc.originalName || doc.fileName,
+      fileSize: doc.fileSize,
+      uploadedAt: doc.uploadedAt,
+    })
   }
 
-  const retryDoc = (id: string) => {
-    setDocs(prev => prev.map(d => d.id === id ? { ...d, status: 'in_review' } : d))
+  const clearSlot = (i: number) => {
+    updateSlot(i, {
+      status: 'idle', progress: 0,
+      fileName: undefined, fileSize: undefined,
+      uploadedAt: undefined, usingSaved: false,
+    })
   }
 
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
+  const validCount = slots.filter(s => s.status === 'valid' || s.status === 'saved').length
+  const progress   = requiredDocs.length > 0 ? Math.round((validCount / requiredDocs.length) * 100) : 0
+  const canProceed = validCount > 0 && !slots.some(s => s.status === 'uploading')
 
-  const statusConfig = {
-    uploading: { color: 'text-blue-500',   bg: 'bg-blue-50',   label: 'Uploading...' },
-    valid:     { color: 'text-green-600',  bg: 'bg-green-50',  label: 'Valid' },
-    rejected:  { color: 'text-red-500',    bg: 'bg-red-50',    label: 'Rejected' },
-    in_review: { color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'In Review' },
+  if (step === 'branch') {
+    return (
+      <BranchPicker
+        serviceType={serviceType}
+        stepLabel="Step 3 of 3 · Choose a Branch"
+        onBack={() => setStep('documents')}
+        onBooked={(ticket) => { setMyTicket(ticket); navigate('/ticket') }}
+      />
+    )
   }
-
-  const validCount    = docs.filter(d => d.status === 'valid').length
-  const hasRejected   = docs.some(d => d.status === 'rejected')
-  const canProceed    = validCount > 0 && !uploading
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white border-b border-gray-100 px-5 py-4 flex items-center gap-3 sticky top-0 z-10">
-        <button onClick={() => navigate(-1)} className="p-1 rounded-full hover:bg-gray-100">←</button>
+      <div className="bg-white border-b border-gray-100 px-5 h-20 flex items-center gap-3 sticky top-0 z-10">
+        <button
+          onClick={() => navigate(-1)}
+          className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-gray-100 transition-colors text-gray-700 font-bold text-lg"
+        >
+          ←
+        </button>
         <span className="flex-1 text-center text-base font-semibold text-gray-900">Document Verification</span>
+        <div className="w-9" />
       </div>
 
-      {/* Progress bar */}
+      {/* Progress header */}
       <div className="bg-white px-5 py-3 border-b border-gray-100">
         <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">
-            Step {step} of {totalSteps}: Upload Documents
-          </span>
-          <span className="text-xs font-bold text-green-500">{Math.min(progress, 100)}% Complete</span>
+          <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Step 2 of 3 · Upload Documents</span>
+          <span className="text-xs font-bold text-green-500">{progress}% Complete</span>
         </div>
         <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
           <div
             className="h-full bg-green-500 rounded-full transition-all duration-500"
-            style={{ width: `${Math.min(progress, 100)}%` }}
+            style={{ width: `${progress}%` }}
           />
         </div>
       </div>
 
-      <div className="flex-1 px-5 py-4 flex flex-col gap-4 pb-28">
-
-        {/* Service title */}
-        <div className="flex items-start justify-between">
+      {/* Scrollable content */}
+      <div className="flex-1 px-5 md:px-8 py-5 flex flex-col gap-4 max-w-3xl mx-auto w-full pb-10">
+        {/* Service info */}
+        <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-gray-900">{serviceLabel}</h2>
-            <p className="text-xs text-gray-400 mt-0.5">South African Citizen</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {validCount} of {requiredDocs.length} document{requiredDocs.length !== 1 ? 's' : ''} ready
+            </p>
           </div>
-          <div className="w-10 h-10 bg-green-50 rounded-xl flex items-center justify-center">
-            <FileText className="w-5 h-5 text-green-600" />
-          </div>
-        </div>
-
-        {/* Required documents checklist */}
-        <div className="bg-white border border-gray-200 rounded-2xl p-4">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Required Documents</p>
-          <div className="flex flex-col gap-2">
-            {requiredDocs.map((doc, i) => {
-              const matched = docs.find(d => d.status === 'valid')
-              return (
-                <div key={i} className="flex items-center gap-2.5">
-                  <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0
-                    ${i < validCount ? 'bg-green-500' : 'border-2 border-gray-300'}`}>
-                    {i < validCount && <CheckCircle className="w-3.5 h-3.5 text-white" />}
-                  </div>
-                  <span className={`text-sm ${i < validCount ? 'text-green-600 font-medium' : 'text-gray-600'}`}>
-                    {doc}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Document type selector */}
-        <div>
-          <label className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 block">
-            Document Type
-          </label>
-          <select
-            value={docType}
-            onChange={e => setDocType(e.target.value)}
-            className="w-full border border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 appearance-none"
-          >
-            {DOC_TYPE_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Upload area */}
-        <div
-          onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-green-300 bg-green-50 rounded-2xl p-6 flex flex-col items-center gap-3 cursor-pointer hover:bg-green-100 transition-colors"
-        >
-          <div className="flex gap-3">
-            <div className="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center">
-              <Camera className="w-6 h-6 text-white" />
-            </div>
-            <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center">
-              <Image className="w-6 h-6 text-gray-500" />
-            </div>
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-bold text-gray-800">Upload Required Documents</p>
-            <p className="text-xs text-gray-500 mt-0.5">Capture a clear photo or select a file from your gallery (PDF, JPG)</p>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.jpg,.jpeg,.png"
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-        </div>
-
-        {/* Uploaded documents list */}
-        {docs.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-bold text-gray-800">
-                Uploaded Documents ({docs.length})
-              </p>
-              <span className={`text-xs font-bold px-2 py-1 rounded-full
-                ${hasRejected ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-600'}`}>
-                {hasRejected ? 'ACTION NEEDED' : 'IN REVIEW'}
+          <div className="flex items-center gap-2">
+            {service && (
+              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-green-100 text-green-700 border border-green-200">
+                {service.feeDisplay}
               </span>
+            )}
+            <div className="w-10 h-10 bg-green-50 rounded-xl flex items-center justify-center">
+              <FileText className="w-5 h-5 text-green-600" />
             </div>
+          </div>
+        </div>
 
-            <div className="flex flex-col gap-2">
-              {docs.map(doc => {
-                const cfg = statusConfig[doc.status]
-                return (
-                  <div key={doc.id} className="bg-white border border-gray-200 rounded-2xl px-4 py-3 flex items-center gap-3">
-                    <div className="w-9 h-9 bg-gray-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                      <FileText className="w-4 h-4 text-gray-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-gray-800 truncate">{doc.name}</p>
-                        <span className={`text-xs font-bold flex-shrink-0 ${cfg.color}`}>{cfg.label}</span>
-                      </div>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {DOC_TYPE_OPTIONS.find(o => o.value === doc.docType)?.label} • {formatSize(doc.size)}
-                      </p>
-                    </div>
-                    <div className="flex gap-1 flex-shrink-0">
-                      {doc.status === 'rejected' && (
-                        <button onClick={() => retryDoc(doc.id)} className="p-1.5 rounded-lg hover:bg-gray-100">
-                          <RefreshCw className="w-4 h-4 text-amber-500" />
-                        </button>
-                      )}
-                      <button onClick={() => removeDoc(doc.id)} className="p-1.5 rounded-lg hover:bg-red-50">
-                        <Trash2 className="w-4 h-4 text-red-400" />
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+        {/* Bad deep link — service code isn't in the catalog */}
+        {loaded && !service && (
+          <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+            <p className="text-sm text-amber-800 font-medium leading-snug">
+              We couldn't find that service. Please go back and pick one again.
+            </p>
           </div>
         )}
 
-        {/* AI Verification report */}
-        {docs.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
-            <div className="bg-gray-900 px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-green-400" />
-                <span className="text-sm font-bold text-white">AI Verification Report</span>
-              </div>
-              <span className="text-xs font-bold text-green-400 bg-green-900 px-2 py-0.5 rounded-full">REAL-TIME</span>
-            </div>
-            <div className="p-4 flex flex-col gap-3">
-              {validCount > 0 && (
-                <div className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">Certified Copy Detection</p>
-                    <p className="text-xs text-gray-400">Document stamps verified successfully.</p>
-                  </div>
-                </div>
-              )}
-              {validCount < requiredDocs.length && (
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">Missing Documents</p>
-                    <p className="text-xs text-gray-400">
-                      {requiredDocs.length - validCount} more document(s) still required.
-                    </p>
-                  </div>
-                </div>
-              )}
-              <div className="pt-2 border-t border-gray-100">
-                <button className="flex items-center gap-2 text-sm text-green-600 font-semibold">
-                  View Requirements <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+        {/* Saved-docs available banner */}
+        {!savedLoading && slots.some(s => s.savedDoc && s.status === 'idle') && (
+          <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-2xl px-4 py-3">
+            <Archive className="w-5 h-5 text-green-600 shrink-0" />
+            <p className="text-sm text-green-800 font-medium leading-snug">
+              You have saved documents that can be reused — look for the{' '}
+              <span className="font-bold">"Use this"</span> option on each card.
+            </p>
           </div>
         )}
 
+        {/* Document slot cards */}
+        {slots.map((slot, i) => (
+          <SlotCard
+            key={i}
+            slot={slot}
+            onUpload={() => triggerUpload(i)}
+            onUseSaved={(doc) => useSaved(i, doc)}
+            onClear={() => clearSlot(i)}
+          />
+        ))}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+
+        {/* Find Branch CTA */}
+        <div className="flex flex-col gap-2 mt-2">
+          <button
+            onClick={() => setStep('branch')}
+            disabled={!canProceed}
+            className={`w-full py-4 rounded-2xl text-base font-bold flex items-center justify-center gap-2 transition-all
+              ${canProceed
+                ? 'bg-green-500 text-white hover:bg-green-600 active:scale-[0.98] shadow-[0_4px_14px_rgba(29,185,84,0.35)]'
+                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              }`}
+          >
+            <MapPin className="w-5 h-5" />
+            Find Nearby Branch
+            <ChevronRight className="w-5 h-5" />
+          </button>
+          {!canProceed ? (
+            <p className="text-xs text-gray-400 text-center">Upload at least one document to continue</p>
+          ) : (
+            <p className="text-xs text-gray-400 text-center">
+              Documents are pre-validated. Final approval at the branch.
+            </p>
+          )}
+        </div>
       </div>
+    </div>
+  )
+}
 
-      {/* Bottom CTA — fixed */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-5 py-4 flex flex-col gap-2">
-        <button
-          onClick={() => navigate(`/branches?serviceType=${serviceType}`)}
-          disabled={!canProceed}
-          className={`w-full py-4 rounded-2xl text-base font-bold flex items-center justify-center gap-2 transition-all
-            ${canProceed
-              ? 'bg-green-500 text-white hover:bg-green-600 active:scale-95'
-              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            }`}
+// ── Slot card ─────────────────────────────────────────────────────────────────
+
+function SlotCard({
+  slot, onUpload, onUseSaved, onClear,
+}: {
+  slot: Slot
+  onUpload: () => void
+  onUseSaved: (doc: Document) => void
+  onClear: () => void
+}) {
+  const isDone      = slot.status === 'valid' || slot.status === 'saved'
+  const isUploading = slot.status === 'uploading'
+  const isRejected  = slot.status === 'rejected'
+  const isReview    = slot.status === 'in_review'
+
+  const borderClass =
+    isDone      ? 'border-green-300 bg-green-50/40'  :
+    isUploading ? 'border-blue-300  bg-blue-50/30'   :
+    isRejected  ? 'border-red-300   bg-red-50/30'    :
+    isReview    ? 'border-amber-300 bg-amber-50/30'  :
+    'border-gray-200'
+
+  return (
+    <div className={`bg-white border-2 rounded-2xl overflow-hidden transition-all duration-300 ${borderClass}`}>
+      {/* Header row */}
+      <div className="px-4 pt-4 pb-3 flex items-start gap-3">
+        {/* Status icon */}
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all duration-300
+          ${isDone      ? 'bg-green-500' :
+            isUploading ? 'bg-blue-500'  :
+            isRejected  ? 'bg-red-100'   :
+            isReview    ? 'bg-amber-100' : 'bg-gray-100'}`}
         >
-          <MapPin className="w-5 h-5" />
-          Find Nearby Branch
-          <ChevronRight className="w-5 h-5" />
-        </button>
-        <p className="text-xs text-gray-400 text-center">
-          Your documents will be pre-validated. Final approval is subject to physical verification at the branch.
-        </p>
+          {isDone      ? <CheckCircle className="w-5 h-5 text-white" />            :
+           isUploading ? <Upload      className="w-5 h-5 text-white animate-bounce" /> :
+           isRejected  ? <AlertCircle className="w-5 h-5 text-red-500" />          :
+           isReview    ? <Clock       className="w-5 h-5 text-amber-500" />         :
+           <FileText   className="w-5 h-5 text-gray-400" />}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-gray-900">{slot.req.label}</p>
+          <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{slot.req.hint}</p>
+        </div>
+
+        {/* Action button */}
+        {isDone || isReview ? (
+          <button
+            onClick={onClear}
+            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-red-50 flex items-center justify-center transition-colors shrink-0"
+            title="Remove document"
+          >
+            <X className="w-4 h-4 text-gray-500" />
+          </button>
+        ) : !isUploading && (
+          <button
+            onClick={onUpload}
+            className="flex items-center gap-1.5 text-xs font-bold text-white bg-green-500 hover:bg-green-600 active:scale-95 px-3 py-2 rounded-xl transition-all shrink-0 shadow-sm"
+          >
+            <Upload className="w-3.5 h-3.5" /> Upload
+          </button>
+        )}
       </div>
+
+      {/* Saved doc suggestion */}
+      {slot.savedDoc && slot.status === 'idle' && (
+        <div className="mx-4 mb-3 flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
+          <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center shrink-0">
+            <Archive className="w-3.5 h-3.5 text-green-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-green-800 truncate">
+              {slot.savedDoc.originalName || slot.savedDoc.fileName}
+            </p>
+            <p className="text-[11px] text-green-600 mt-0.5 flex items-center gap-1.5">
+              <Clock className="w-3 h-3" />
+              Uploaded {timeAgo(slot.savedDoc.uploadedAt)} · {formatSize(slot.savedDoc.fileSize)}
+            </p>
+          </div>
+          <button
+            onClick={() => onUseSaved(slot.savedDoc!)}
+            className="text-[11px] font-bold text-green-700 bg-white border border-green-300 px-2.5 py-1.5 rounded-lg hover:bg-green-50 transition-colors shrink-0"
+          >
+            Use this
+          </button>
+        </div>
+      )}
+
+      {/* Upload progress bar */}
+      {isUploading && (
+        <div className="px-4 pb-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-semibold text-blue-600">Uploading…</span>
+            <span className="text-xs font-black text-blue-700">{slot.progress}%</span>
+          </div>
+          <div className="w-full h-2.5 bg-blue-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-500 rounded-full transition-all duration-150"
+              style={{ width: `${slot.progress}%` }}
+            />
+          </div>
+          {slot.fileName && (
+            <div className="flex items-center gap-2 mt-2 text-xs text-gray-400">
+              <FileText className="w-3.5 h-3.5 shrink-0" />
+              <span className="flex-1 truncate">{slot.fileName}</span>
+              {slot.fileSize && <span className="shrink-0">{formatSize(slot.fileSize)}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Done / in review — file info strip */}
+      {(isDone || isReview) && slot.fileName && (
+        <div className="px-4 pb-4">
+          <div className={`flex items-center gap-2 text-xs rounded-xl px-3 py-2.5
+            ${isDone   ? 'bg-green-50  text-green-700'  :
+              isReview ? 'bg-amber-50  text-amber-700'  : 'text-gray-500'}`}
+          >
+            <FileText className="w-3.5 h-3.5 shrink-0" />
+            <span className="flex-1 truncate font-medium">{slot.fileName}</span>
+            {slot.fileSize && (
+              <span className="shrink-0 font-medium">{formatSize(slot.fileSize)}</span>
+            )}
+            {slot.uploadedAt && (
+              <span className="shrink-0 flex items-center gap-1 opacity-70">
+                <Clock className="w-3 h-3" />
+                {timeAgo(slot.uploadedAt)}
+              </span>
+            )}
+            <span className={`shrink-0 font-bold px-2 py-0.5 rounded-full border text-[11px]
+              ${isDone && slot.usingSaved  ? 'bg-green-100 border-green-200 text-green-700' :
+                isDone                    ? 'bg-green-100 border-green-200 text-green-700' :
+                'bg-amber-50 border-amber-200 text-amber-700'}`}
+            >
+              {slot.status === 'saved'    ? 'Reused' :
+               slot.status === 'valid'   ? 'Valid'   : 'In Review'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Rejected — retry prompt */}
+      {isRejected && (
+        <div className="px-4 pb-4 flex items-center justify-between gap-3">
+          <p className="text-xs text-red-500 font-medium">Document rejected. Please upload a clearer copy.</p>
+          <button
+            onClick={onUpload}
+            className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 shrink-0"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Retry
+          </button>
+        </div>
+      )}
     </div>
   )
 }

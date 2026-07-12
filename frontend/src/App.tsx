@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { lazy, Suspense, Component, ReactNode } from 'react'
 import ProtectedLayout from './components/layout/ProtectedLayout'
 import FaceScanModal from './components/FaceScanModal'
+import { AppSkeleton } from './components/Skeleton'
 
 // ✅ Auth pages loaded eagerly — no lazy/Suspense blocking navigation
 import LoginPage      from './pages/LoginPage'
@@ -12,6 +13,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage'
 
 // App screens — lazy is fine for these
 const FaceVerifyPage  = lazy(() => import('./pages/FaceVerifyPage'))
+const ApplicantTypePage = lazy(() => import('./pages/ApplicantTypePage'))
 const HomePage        = lazy(() => import('./pages/HomePage'))
 const DocumentsPage   = lazy(() => import('./pages/DocumentsPage'))
 const BranchesPage    = lazy(() => import('./pages/BranchPage'))
@@ -21,14 +23,7 @@ const QueueStatusPage = lazy(() => import('./pages/QueueStatusPage'))
 const FeedbackPage    = lazy(() => import('./pages/FeedbackPage'))
 const SettingsPage    = lazy(() => import('./pages/SettingsPage'))
 
-const Loader = () => (
-  <div className="mobile-shell flex items-center justify-center min-h-screen">
-    <div className="flex flex-col items-center gap-3">
-      <div className="w-10 h-10 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
-      <p className="text-sm text-gray-400">Loading…</p>
-    </div>
-  </div>
-)
+const Loader = () => <AppSkeleton />
 
 // ✅ Error boundary catches silent lazy-load crashes and shows the actual error
 interface EBState { hasError: boolean; error: Error | null }
@@ -62,24 +57,34 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
   }
 }
 
+function AuthShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-dvh bg-gray-100 md:flex md:items-center md:justify-center md:py-10"
+         style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #e8f5e9 50%, #f1f5f9 100%)' }}>
+      <div className="mobile-shell">{children}</div>
+    </div>
+  )
+}
+
 export default function App() {
   return (
-    <div className="min-h-screen bg-gray-100 flex items-start justify-center">
+    <div className="min-h-screen bg-gray-100">
       <ErrorBoundary>
         {/* Global face modal — shown by Axios interceptor when face session expires mid-session */}
         <FaceScanModal />
         <Suspense fallback={<Loader />}>
           <Routes>
             {/* Auth — eagerly imported, no lazy blocking */}
-            <Route path="/login"       element={<div className="mobile-shell"><LoginPage /></div>} />
-            <Route path="/register"    element={<div className="mobile-shell"><RegisterPage /></div>} />
-            <Route path="/verify-otp"  element={<div className="mobile-shell"><OtpVerifyPage /></div>} />
-            <Route path="/verify-id"   element={<div className="mobile-shell"><SaIdVerifyPage /></div>} />
-            <Route path="/verify-face"      element={<div className="mobile-shell"><FaceVerifyPage /></div>} />
-            <Route path="/forgot-password"  element={<div className="mobile-shell"><ForgotPasswordPage /></div>} />
+            <Route path="/login"       element={<AuthShell><LoginPage /></AuthShell>} />
+            <Route path="/register"    element={<AuthShell><RegisterPage /></AuthShell>} />
+            <Route path="/verify-otp"  element={<AuthShell><OtpVerifyPage /></AuthShell>} />
+            <Route path="/verify-id"   element={<AuthShell><SaIdVerifyPage /></AuthShell>} />
+            <Route path="/verify-face"      element={<AuthShell><FaceVerifyPage /></AuthShell>} />
+            <Route path="/forgot-password"  element={<AuthShell><ForgotPasswordPage /></AuthShell>} />
 
             {/* Protected app screens */}
             <Route element={<ProtectedLayout />}>
+              <Route path="/applicant-type" element={<ApplicantTypePage />} />
               <Route path="/home"         element={<HomePage />} />
               <Route path="/documents"    element={<DocumentsPage />} />
               <Route path="/branches"     element={<BranchesPage />} />

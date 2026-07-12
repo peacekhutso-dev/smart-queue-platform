@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, Share2, XCircle, MapPin, Shield } from 'lucide-react'
+import { Bell, Share2, XCircle, MapPin } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useQueueStore } from '../store/QueueStore'
 import { useAuthStore } from '../store/AuthStore'
 import axios from '../api/Axios'
+import ScreenHeader from '@/components/layout/ScreenHeader'
 
 export default function TicketPage() {
   const navigate = useNavigate()
@@ -19,14 +20,17 @@ export default function TicketPage() {
 
   if (!ticket) {
     return (
-      <div className="flex flex-col min-h-screen items-center justify-center gap-4 px-8 text-center">
-        <p className="text-gray-500">No active ticket. Join a queue first.</p>
-        <button
-          onClick={() => navigate('/branches')}
-          className="bg-green-500 text-white font-bold rounded-2xl py-3 px-8 hover:bg-green-600"
-        >
-          Find a Branch
-        </button>
+      <div className="flex flex-col min-h-screen bg-gray-50 overscroll-none">
+        <ScreenHeader title="History" showSettings={false} />
+        <div className="flex flex-col items-center justify-center gap-4 px-5 text-center flex-1">
+          <p className="text-gray-500">No active ticket. Join a queue first.</p>
+          <button
+            onClick={() => navigate('/branches')}
+            className="bg-green-500 text-white font-bold rounded-2xl py-3 px-8 hover:bg-green-600"
+          >
+            Find a Branch
+          </button>
+        </div>
       </div>
     )
   }
@@ -48,17 +52,10 @@ export default function TicketPage() {
   const seats = Array.from({ length: Math.min(ticket.totalInQueue ?? 5, 5) }, (_, i) => i + 1)
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white flex items-center justify-between px-5 py-4 border-b border-gray-100">
-        <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center">
-          <Shield className="w-5 h-5 text-white" />
-        </div>
-        <span className="font-semibold text-gray-900">Active Ticket</span>
-        <div className="w-9" />
-      </div>
+    <div className="flex flex-col flex-1 min-h-0 bg-gray-50">
+      <ScreenHeader title="History" showSettings={false} />
 
-      <div className="px-5 py-4 flex flex-col gap-4 pb-24">
+      <div className="px-5 md:px-8 py-4 md:py-6 flex flex-col gap-4 pb-8 max-w-3xl mx-auto w-full">
         {/* Title */}
         <div>
           <h3 className="font-bold text-gray-900">{ticket.serviceType?.replace(/_/g, ' ')}</h3>

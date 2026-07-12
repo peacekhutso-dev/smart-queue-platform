@@ -1,0 +1,48 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: feedback-service
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:feedback_db}?useSSL=false&serverTimezone=Africa/Johannesburg&allowPublicKeyRetrieval=true
+    username: ${DB_USER:feedback_user}
+    password: ${DB_PASS:feedbackpassword}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+
+app:
+  # Resolves branchId when a rating is submitted, the same way queue-service's
+  # BranchClient does — direct synchronous call, not through the Gateway.
+  branch-service:
+    url: ${BRANCH_SERVICE_URL:http://localhost:8087}
+  frontend:
+    url: ${FRONTEND_URL:http://localhost:5173}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
+
+logging:
+  level:
+    com.dha.feedback: DEBUG
+    org.hibernate.SQL: WARN

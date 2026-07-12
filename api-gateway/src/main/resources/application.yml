@@ -1,0 +1,114 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            # Payments — extracted service, no longer touches the monolith.
+            - id: payment-service
+              uri: ${PAYMENT_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/payments/**
+
+            # Notification relay's own STOMP endpoint. Kept separate from
+            # queue-service's /ws (queue broadcasts) — consolidating the two
+            # into one endpoint is a possible later cleanup, not done here.
+            - id: notification-gateway
+              uri: ${NOTIFICATION_GATEWAY_URL:ws://localhost:8084}
+              predicates:
+                - Path=/ws/notifications/**
+
+            # Face verification — extracted service. Must be ordered before
+            # the identity-service rule below, since Gateway takes the first
+            # matching route and /api/auth/face/** would otherwise also
+            # match /api/auth/**.
+            - id: verification-service
+              uri: ${VERIFICATION_SERVICE_URL:http://localhost:8086}
+              predicates:
+                - Path=/api/auth/face/**
+
+            # Identity — extracted service: register/login/OTP/password-reset/
+            # WebAuthn/JWT issuance. No longer touches the monolith.
+            - id: identity-service
+              uri: ${IDENTITY_SERVICE_URL:http://localhost:8085}
+              predicates:
+                - Path=/api/auth/**
+
+            # Branch — extracted service. Talks to queue-service directly
+            # (service-to-service, not through the Gateway) for branch config.
+            - id: branch-service
+              uri: ${BRANCH_SERVICE_URL:http://localhost:8087}
+              predicates:
+                - Path=/api/branches/**
+
+            # Queue — extracted service (Phase 6): join/cancel/advance tickets
+            # and branch queue stats. No longer touches the monolith.
+            - id: queue-service
+              uri: ${QUEUE_SERVICE_URL:http://localhost:8088}
+              predicates:
+                - Path=/api/queue/**
+
+            # Queue-service's own STOMP endpoint (queue broadcasts). Must come
+            # after the notification-gateway route above, since /ws/** would
+            # otherwise also match /ws/notifications/**.
+            - id: queue-service-ws
+              uri: ${QUEUE_SERVICE_URL:http://localhost:8088}
+              predicates:
+                - Path=/ws/**
+
+            # Document — extracted service: ID document upload/list/delete.
+            - id: document-service
+              uri: ${DOCUMENT_SERVICE_URL:http://localhost:8089}
+              predicates:
+                - Path=/api/documents/**
+
+            # Feedback — extracted service: post-visit ratings.
+            - id: feedback-service
+              uri: ${FEEDBACK_SERVICE_URL:http://localhost:8090}
+              predicates:
+                - Path=/api/feedback/**
+
+            # Catalog — applicant types, services, fees, document
+            # requirements. Public reference data; mostly permitAll reads.
+            - id: catalog-service
+              uri: ${CATALOG_SERVICE_URL:http://localhost:8091}
+              predicates:
+                - Path=/api/catalog/**
+          httpclient:
+            connect-timeout: 5000
+            response-timeout: 10s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+app:
+  identity-service:
+    url: ${IDENTITY_SERVICE_URL:http://localhost:8085}
+  zero-trust:
+    dev-bypass: ${ZERO_TRUST_BYPASS:true}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO

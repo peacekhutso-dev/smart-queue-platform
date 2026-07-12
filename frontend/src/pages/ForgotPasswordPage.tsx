@@ -1,82 +1,98 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Mail, ArrowLeft } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
+  const [email, setEmail]   = useState('')
+  const [sent, setSent]     = useState(false)
   const [loading, setLoading] = useState(false)
+  const [error, setError]   = useState('')
 
   const handleSubmit = async () => {
-    if (!email.includes('@')) {
-      toast.error('Please enter a valid email address.')
-      return
-    }
+    if (!email.includes('@')) { setError('Please enter a valid email address.'); return }
     setLoading(true)
-    // Simulate network call — replace with real API when endpoint is ready
     await new Promise((r) => setTimeout(r, 1000))
     setLoading(false)
     setSent(true)
   }
 
-  return (
-    <div className="min-h-screen flex flex-col px-6 pt-12 pb-8 bg-white">
-      <button
-        onClick={() => navigate(-1)}
-        className="flex items-center gap-2 text-gray-500 mb-8 self-start"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        <span className="text-sm font-medium">Back to Login</span>
-      </button>
-
-      {sent ? (
-        <div className="flex flex-col items-center text-center gap-4 mt-10">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-            <Mail className="w-8 h-8 text-green-600" />
+  if (sent) {
+    return (
+      <div className="min-h-dvh md:min-h-0 flex flex-col bg-white animate-slide-up px-8">
+        <div className="flex-1 flex flex-col items-center justify-center gap-6 text-center">
+          <div className="w-20 h-20 rounded-full bg-primary-500 flex items-center justify-center shadow-[0_8px_32px_rgba(29,185,84,0.35)] animate-celebrate">
+            <Check className="w-10 h-10 text-white" strokeWidth={3} />
           </div>
-          <h2 className="text-xl font-bold text-gray-900">Check your email</h2>
-          <p className="text-sm text-gray-500 max-w-xs">
-            If an account with <span className="font-semibold text-gray-700">{email}</span> exists,
-            you will receive a password reset link shortly.
-          </p>
+          <div>
+            <h2 className="text-2xl font-black text-gray-900">Check your email</h2>
+            <p className="text-gray-500 mt-2 text-sm leading-relaxed max-w-xs">
+              If <span className="font-semibold text-gray-700">{email}</span> is linked to an account,
+              you'll receive a reset link shortly.
+            </p>
+          </div>
+        </div>
+        <div className="pb-10">
           <button
             onClick={() => navigate('/login')}
-            className="mt-4 w-full bg-green-500 text-white font-bold py-4 rounded-2xl hover:bg-green-600 transition-all"
+            className="btn-primary"
           >
-            Return to Login
+            Back to Sign In
           </button>
         </div>
-      ) : (
-        <>
-          <h2 className="text-2xl font-bold text-gray-900 mb-1">Forgot Password?</h2>
-          <p className="text-sm text-gray-500 mb-8">
-            Enter your email and we'll send you a reset link.
-          </p>
+      </div>
+    )
+  }
 
-          <div className="flex flex-col gap-4">
-            <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="email"
-                placeholder="Email address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full border border-gray-200 rounded-2xl px-4 py-4 pl-11 text-base placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-            </div>
+  return (
+    <div className="min-h-dvh md:min-h-0 flex flex-col bg-white overflow-x-hidden animate-slide-up">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 pt-12 pb-4">
+        <button
+          onClick={() => navigate(-1)}
+          className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+        >
+          <ArrowLeft className="w-5 h-5 text-gray-700" />
+        </button>
+        <div className="w-10" />
+      </div>
 
-            <button
-              onClick={handleSubmit}
-              disabled={loading}
-              className="w-full bg-green-500 text-white font-bold py-4 rounded-2xl hover:bg-green-600 transition-all active:scale-95 disabled:opacity-50"
-            >
-              {loading ? 'Sending…' : 'Send Reset Link'}
-            </button>
-          </div>
-        </>
-      )}
+      <div className="flex-1 flex flex-col px-6 pt-8 pb-8">
+        <span className="text-5xl mb-6 leading-none">🔒</span>
+        <h1 className="text-[2rem] font-black text-gray-900 leading-tight mb-1.5">
+          Forgot your<br />password?
+        </h1>
+        <p className="text-gray-400 text-sm mb-10">
+          No worries. Enter your email and we'll send you a reset link.
+        </p>
+
+        <input
+          autoFocus
+          type="email"
+          inputMode="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => { setEmail(e.target.value); setError('') }}
+          onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+          className="input-field text-lg font-semibold"
+        />
+
+        {error && <p className="text-red-500 text-sm mt-3 font-medium">{error}</p>}
+
+        <div className="flex-1 min-h-8" />
+
+        <button onClick={handleSubmit} disabled={loading} className="btn-primary flex items-center justify-center gap-2">
+          {loading ? (
+            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+          ) : (
+            <>Send Reset Link <ArrowRight className="w-5 h-5" /></>
+          )}
+        </button>
+      </div>
     </div>
   )
 }
