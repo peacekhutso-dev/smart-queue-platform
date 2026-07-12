@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ShieldCheck, RotateCcw } from 'lucide-react'
+import { ArrowLeft, RotateCcw, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/AuthStore'
 import axios from '../api/Axios'
@@ -18,16 +18,13 @@ export default function OtpVerifyPage() {
   const sessionMode      = params.get('session') === 'true'
 
   const { pendingPhone, user, set2faVerified } = useAuthStore()
-
-  // Session mode uses the logged-in user's phone; registration uses pendingPhone
   const phone = sessionMode ? (user?.phone ?? '') : (pendingPhone ?? '')
 
-  const [digits, setDigits]     = useState<string[]>(Array(OTP_LENGTH).fill(''))
-  const [loading, setLoading]   = useState(false)
-  const [hasError, setHasError] = useState(false)
+  const [digits, setDigits]       = useState<string[]>(Array(OTP_LENGTH).fill(''))
+  const [loading, setLoading]     = useState(false)
+  const [hasError, setHasError]   = useState(false)
   const [countdown, setCountdown] = useState(OTP_TTL)
   const [resending, setResending] = useState(false)
-
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
 
   useEffect(() => {
@@ -36,24 +33,16 @@ export default function OtpVerifyPage() {
     return () => clearInterval(id)
   }, [countdown])
 
-  // Redirect if no phone available
   useEffect(() => {
     if (!phone) navigate('/login', { replace: true })
   }, [phone, navigate])
 
-  // In session mode, auto-send OTP to the user's registered phone on mount
   useEffect(() => {
-    if (sessionMode && phone) {
-      sendOtp()
-    }
+    if (sessionMode && phone) sendOtp()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendOtp = async () => {
-    try {
-      await axios.post('/auth/send-otp', { identifier: phone })
-    } catch {
-      // non-fatal — user can manually resend
-    }
+    try { await axios.post('/auth/send-otp', { identifier: phone }) } catch { /* non-fatal */ }
   }
 
   const focusNext = (idx: number) => inputRefs.current[idx + 1]?.focus()
@@ -84,21 +73,14 @@ export default function OtpVerifyPage() {
     const code = digits.join('')
     if (code.length < OTP_LENGTH) { setHasError(true); return }
     if (!phone) return
-
     setLoading(true)
     try {
       await axios.post('/auth/verify-otp', { identifier: phone, otp: code })
-
-      // Grant 2FA gate on client side (mirrors what backend stores in Redis)
       set2faVerified()
-
       toast.success('Phone verified!')
-
       if (sessionMode) {
-        // Session renewal — go back to face verify so the user passes Gate 3 too
         navigate('/verify-face?mode=verify', { replace: true })
       } else {
-        // Registration flow — next step is SA ID verification
         navigate('/verify-id')
       }
     } catch {
@@ -130,33 +112,43 @@ export default function OtpVerifyPage() {
     ? `+27 ••• ••• ${phone.slice(-4)}`
     : '+27 ••• ••• ????'
 
+  const filled = digits.join('').length
+
   return (
-    <div className="min-h-screen flex flex-col bg-white">
-      <div className="flex items-center px-5 py-4 border-b border-gray-100">
-        <button onClick={() => navigate(-1)} className="p-1 rounded-full hover:bg-gray-100 mr-3 text-lg">←</button>
-        <span className="flex-1 text-center text-base font-semibold text-gray-900">
-          {sessionMode ? 'Re-Authenticate' : 'Verification'}
+    <div className="min-h-dvh md:min-h-0 flex flex-col bg-white animate-slide-up">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 pt-12 pb-4">
+        <button
+          onClick={() => navigate(-1)}
+          className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+        >
+          <ArrowLeft className="w-5 h-5 text-gray-700" />
+        </button>
+        <span className="text-sm font-semibold text-gray-400">
+          {sessionMode ? 'Re-authenticate' : 'Verification'}
         </span>
-        <div className="w-8" />
+        <div className="w-10" />
       </div>
 
-      <div className="flex-1 flex flex-col items-center gap-6 px-6 py-8">
-        <div className="w-20 h-20 rounded-full bg-green-50 flex items-center justify-center">
-          <ShieldCheck className="w-10 h-10 text-green-600" />
+      <div className="flex-1 flex flex-col px-6 pt-8 pb-8">
+        {/* Icon */}
+        <div className="w-16 h-16 rounded-2xl bg-primary-50 flex items-center justify-center mb-6">
+          <ShieldCheck className="w-8 h-8 text-primary-500" />
         </div>
 
-        <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900">Enter the 6-digit code</h2>
-          <p className="text-gray-500 mt-2 text-sm leading-relaxed">
-            {sessionMode
-              ? 'Your session expired. Enter the code sent to'
-              : 'We\'ve sent a secure verification code to'}
-            <br />
-            <span className="font-semibold text-gray-800">{maskedPhone}</span>
-          </p>
-        </div>
+        <h1 className="text-[2rem] font-black text-gray-900 leading-tight mb-1.5">
+          Check your<br />phone
+        </h1>
+        <p className="text-gray-400 text-sm mb-10">
+          {sessionMode ? 'Session expired. We sent a code to' : 'We sent a 6-digit code to'}{' '}
+          <span className="font-semibold text-gray-700">{maskedPhone}</span>
+        </p>
 
-        <div className={`flex gap-2.5 ${hasError ? 'animate-shake' : ''}`} onPaste={handlePaste}>
+        {/* OTP inputs */}
+        <div
+          className={`flex gap-2 justify-between ${hasError ? 'animate-shake' : ''}`}
+          onPaste={handlePaste}
+        >
           {digits.map((d, i) => (
             <input
               key={i}
@@ -172,50 +164,69 @@ export default function OtpVerifyPage() {
                 ${hasError
                   ? 'border-red-400 bg-red-50 text-red-600'
                   : d
-                    ? 'border-gray-300 bg-white text-gray-900'
+                    ? 'border-primary-400 bg-primary-50 text-primary-600'
                     : i === digits.findIndex((x) => !x)
-                      ? 'border-green-500 ring-2 ring-green-100 bg-white'
-                      : 'border-gray-200 bg-white text-gray-400'
+                      ? 'border-primary-500 ring-2 ring-primary-100 bg-white'
+                      : 'border-gray-200 bg-gray-50'
                 }
               `}
             />
           ))}
         </div>
 
-        <div className="w-full border-2 border-dashed border-gray-200 rounded-2xl p-4 text-center">
-          {countdown > 0 && (
+        {/* Progress dots under inputs */}
+        <div className="flex gap-1 mt-4 justify-center">
+          {Array.from({ length: OTP_LENGTH }).map((_, i) => (
+            <div
+              key={i}
+              className={`w-1.5 h-1.5 rounded-full transition-all duration-200 ${
+                i < filled ? 'bg-primary-500' : 'bg-gray-200'
+              }`}
+            />
+          ))}
+        </div>
+
+        {hasError && <p className="text-red-500 text-sm text-center mt-3 font-medium">Incorrect code. Please try again.</p>}
+
+        <div className="flex-1 min-h-8" />
+
+        {/* Resend */}
+        <div className="bg-gray-50 rounded-2xl p-4 text-center mb-6">
+          {countdown > 0 ? (
             <p className="text-sm text-gray-500">
-              Request new code in{' '}
-              <span className="text-green-600 font-bold">{formatCountdown(countdown)}</span>
+              Resend code in{' '}
+              <span className="text-primary-500 font-bold tabular-nums">{formatCountdown(countdown)}</span>
             </p>
+          ) : (
+            <p className="text-sm text-gray-500">Didn't receive it?</p>
           )}
           <button
             onClick={handleResend}
             disabled={resending || countdown > 0}
-            className="flex items-center gap-1.5 mx-auto mt-1.5 text-sm text-gray-400 disabled:opacity-40 hover:text-green-600 transition-colors"
+            className="flex items-center gap-1.5 mx-auto mt-1.5 text-sm font-semibold text-gray-400 disabled:opacity-40 hover:text-primary-500 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            {resending ? 'Sending…' : 'Resend OTP via SMS'}
+            {resending ? 'Sending…' : 'Resend via SMS'}
           </button>
         </div>
 
-        <p className="text-xs text-gray-400 font-medium tracking-widest flex items-center gap-1.5">
-          <ShieldCheck className="w-3.5 h-3.5" />
-          OFFICIAL DHA VERIFICATION
-        </p>
-      </div>
-
-      <div className="px-6 pb-8 space-y-3">
         <button
           onClick={handleVerify}
-          disabled={loading || digits.join('').length !== OTP_LENGTH}
-          className="w-full bg-green-500 text-white font-bold py-4 rounded-2xl hover:bg-green-600 transition-all active:scale-95 disabled:opacity-50"
+          disabled={loading || filled !== OTP_LENGTH}
+          className="btn-primary flex items-center justify-center gap-2"
         >
-          {loading ? 'Verifying…' : 'Verify & Continue'}
+          {loading ? (
+            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+          ) : (
+            'Verify & Continue'
+          )}
         </button>
-        <p className="text-xs text-gray-400 text-center leading-relaxed">
-          By continuing, you agree to the Department of Home Affairs<br />
-          Terms of Service and Privacy Policy.
+
+        <p className="text-xs text-gray-400 text-center mt-4 leading-relaxed">
+          By continuing you agree to the DHA Terms of Service and Privacy Policy.
         </p>
       </div>
     </div>

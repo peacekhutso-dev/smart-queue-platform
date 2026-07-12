@@ -22,11 +22,25 @@
 }
 
 @layer components {
-  /* Mobile shell */
+  /* Mobile shell — auth pages only */
   .mobile-shell {
-    @apply mx-auto bg-white min-h-screen relative overflow-x-hidden;
-    max-width: 430px;
-    box-shadow: 0 0 80px rgba(0,0,0,0.15);
+    @apply mx-auto bg-white relative overflow-x-hidden w-full;
+    min-height: 100dvh;
+    max-width: 480px;
+  }
+  /* Floating pill on desktop */
+  @media (min-width: 768px) {
+    .mobile-shell {
+      min-height: 0;
+      border-radius: 2rem;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.13), 0 0 0 1px rgba(0,0,0,0.05);
+    }
+  }
+
+  /* App shell — full-width, no size constraint */
+  .app-shell {
+    @apply bg-gray-100 min-h-screen;
   }
 
   /* Buttons */
@@ -74,7 +88,7 @@
 
   /* Screen header */
   .screen-header {
-    @apply flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-white sticky top-0 z-20;
+    @apply flex items-center justify-between px-5 h-20 border-b border-gray-100 bg-white sticky top-0 z-20;
   }
 
   /* Badge */
@@ -136,3 +150,42 @@
   to   { opacity: 1; }
 }
 .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 600px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: 0.5rem;
+}
+
+/* Step wizard slide transitions */
+@keyframes slide-in-right {
+  from { transform: translateX(48px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+@keyframes slide-in-left {
+  from { transform: translateX(-48px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+.animate-slide-in-right { animation: slide-in-right 0.28s cubic-bezier(0.25,0.46,0.45,0.94) forwards; }
+.animate-slide-in-left  { animation: slide-in-left  0.28s cubic-bezier(0.25,0.46,0.45,0.94) forwards; }
+
+/* Success celebration */
+@keyframes celebrate {
+  0%   { transform: scale(0) rotate(-180deg); opacity: 0; }
+  60%  { transform: scale(1.15) rotate(8deg); opacity: 1; }
+  80%  { transform: scale(0.92) rotate(-4deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+.animate-celebrate { animation: celebrate 0.65s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+
+@keyframes float-up {
+  0%   { transform: translateY(0) scale(1); opacity: 1; }
+  100% { transform: translateY(-80px) scale(0.5); opacity: 0; }
+}
+.animate-float-up { animation: float-up 0.8s ease-out forwards; }

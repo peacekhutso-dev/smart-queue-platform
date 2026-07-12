@@ -14,6 +14,9 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      # Creates the identity_db schema + scoped user alongside smart_queue on
+      # first init (schema-per-service, one shared instance — see plan).
+      - ./infra/mysql/init-identity-db.sql:/docker-entrypoint-initdb.d/init-identity-db.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       timeout: 20s
@@ -33,11 +36,97 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: dha_rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # management UI (guest/guest by default)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    container_name: dha_otel_collector
+    restart: always
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+
+  # Payment gets its own isolated MySQL instance/credentials (not schema-per-
+  # service in the shared instance like everything else) — tighter backup/
+  # audit/access policy given it's payment data, per the migration plan.
+  payment-mysql:
+    image: mysql:8.0
+    container_name: dha_payment_mysql
+    restart: always
+    environment:
+      MYSQL_DATABASE: ${PAYMENT_DB_NAME:-payment_db}
+      MYSQL_USER: ${PAYMENT_DB_USER:-payment_user}
+      MYSQL_PASSWORD: ${PAYMENT_DB_PASS:-paymentpassword}
+      MYSQL_ROOT_PASSWORD: ${PAYMENT_DB_PASS:-paymentpassword}
+    ports:
+      - "3307:3306"
+    volumes:
+      - payment_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  payment-service:
     build:
-      context: ./backend
+      context: ./payment-service
       dockerfile: Dockerfile
-    container_name: dha_backend
+    container_name: dha_payment_service
+    restart: always
+    depends_on:
+      payment-mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DB_HOST: payment-mysql
+      DB_PORT: 3306
+      DB_NAME: ${PAYMENT_DB_NAME:-payment_db}
+      DB_USER: ${PAYMENT_DB_USER:-payment_user}
+      DB_PASS: ${PAYMENT_DB_PASS:-paymentpassword}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8083:8083"
+
+  notification-gateway:
+    build:
+      context: ./notification-gateway
+      dockerfile: Dockerfile
+    container_name: dha_notification_gateway
+    restart: always
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8084:8084"
+
+  identity-service:
+    build:
+      context: ./identity-service
+      dockerfile: Dockerfile
+    container_name: dha_identity_service
     restart: always
     depends_on:
       mysql:
@@ -47,15 +136,193 @@ services:
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
-      DB_NAME: ${DB_NAME:-smart_queue}
-      DB_USER: ${DB_USER:-dha_user}
-      DB_PASS: ${DB_PASS:-dhapassword}
+      DB_NAME: identity_db
+      DB_USER: identity_user
+      DB_PASS: identitypassword
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production-256-bit}
       JWT_EXPIRY: ${JWT_EXPIRY:-86400000}
-      ML_SERVICE_URL: http://ml-service:8001
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-localhost}
+      WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:-http://localhost:5173,http://localhost:5175,http://localhost:8443,http://localhost:3000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8085:8085"
+
+  verification-service:
+    build:
+      context: ./verification-service
+      dockerfile: Dockerfile
+    container_name: dha_verification_service
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FACE_SERVICE_URL: http://face-service:8002
+      FACE_DEV_BYPASS: ${FACE_DEV_BYPASS:-true}
+      LUXAND_BASE_URL: ${LUXAND_BASE_URL:-https://api.luxand.cloud}
+      LUXAND_API_KEY: ${LUXAND_API_KEY:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8086:8086"
+
+  # Branch-service keeps live per-branch queue counts in a local cache fed by
+  # queue-service's queue.events (RabbitMQ) rather than polling for them —
+  # see QueueCountCache/QueueEventListener. The reverse direction is still a
+  # direct synchronous call: queue-service calls branch-service's public API
+  # for branch config (see queue-service's BranchClient), since that changes
+  # rarely and doesn't need an event-fed cache.
+  branch-service:
+    build:
+      context: ./branch-service
+      dockerfile: Dockerfile
+    container_name: dha_branch_service
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: branch_db
+      DB_USER: branch_user
+      DB_PASS: branchpassword
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8087:8087"
+
+  queue-service:
+    build:
+      context: ./queue-service
+      dockerfile: Dockerfile
+    container_name: dha_queue_service
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: queue_db
+      DB_USER: queue_user
+      DB_PASS: queuepassword
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      BRANCH_SERVICE_URL: http://branch-service:8087
       FRONTEND_URL: http://localhost:5173
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8088:8088"
+
+  document-service:
+    build:
+      context: ./document-service
+      dockerfile: Dockerfile
+    container_name: dha_document_service
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      ml-service:
+        condition: service_started
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: document_db
+      DB_USER: document_user
+      DB_PASS: documentpassword
+      FRONTEND_URL: http://localhost:5173
+      ML_SERVICE_URL: http://ml-service:8001
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8089:8089"
+
+  feedback-service:
+    build:
+      context: ./feedback-service
+      dockerfile: Dockerfile
+    container_name: dha_feedback_service
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: feedback_db
+      DB_USER: feedback_user
+      DB_PASS: feedbackpassword
+      BRANCH_SERVICE_URL: http://branch-service:8087
+      FRONTEND_URL: http://localhost:5173
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8090:8090"
+
+  catalog-service:
+    build:
+      context: ./catalog-service
+      dockerfile: Dockerfile
+    container_name: dha_catalog_service
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: catalog_db
+      DB_USER: catalog_user
+      DB_PASS: catalogpassword
+      FRONTEND_URL: http://localhost:5173
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8091:8091"
+
+  # Single front door for the frontend, and the one place that verifies JWTs
+  # and enforces the 2FA/face/fingerprint zero-trust gates
+  # (ZeroTrustGlobalFilter), forwarding trusted identity downstream via
+  # X-User-Id/X-User-Email/X-User-Role headers. The monolith is fully
+  # decommissioned — every domain now has its own route in
+  # api-gateway/src/main/resources/application.yml.
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: dha_api_gateway
+    restart: always
+    depends_on:
+      - payment-service
+      - notification-gateway
+      - identity-service
+      - verification-service
+      - branch-service
+      - queue-service
+      - document-service
+      - feedback-service
+      - catalog-service
+      - redis
+    environment:
+      PAYMENT_SERVICE_URL: http://payment-service:8083
+      NOTIFICATION_GATEWAY_URL: ws://notification-gateway:8084
+      IDENTITY_SERVICE_URL: http://identity-service:8085
+      VERIFICATION_SERVICE_URL: http://verification-service:8086
+      BRANCH_SERVICE_URL: http://branch-service:8087
+      QUEUE_SERVICE_URL: http://queue-service:8088
+      DOCUMENT_SERVICE_URL: http://document-service:8089
+      FEEDBACK_SERVICE_URL: http://feedback-service:8090
+      CATALOG_SERVICE_URL: http://catalog-service:8091
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ZERO_TRUST_BYPASS: ${ZERO_TRUST_BYPASS:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "8080:8080"
 
@@ -65,8 +332,19 @@ services:
       dockerfile: Dockerfile
     container_name: dha_ml
     restart: always
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "8001:8001"
+
+  face-service:
+    build:
+      context: ./face-service
+      dockerfile: Dockerfile
+    container_name: dha_face
+    restart: always
+    ports:
+      - "8002:8002"
 
   frontend:
     build:
@@ -75,7 +353,7 @@ services:
     container_name: dha_frontend
     restart: always
     depends_on:
-      - backend
+      - api-gateway
     ports:
       - "5173:80"
     environment:
@@ -85,3 +363,5 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  rabbitmq_data:
+  payment_mysql_data:

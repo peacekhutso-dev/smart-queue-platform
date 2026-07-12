@@ -1,0 +1,6 @@
+fastapi==0.111.0
+uvicorn==0.30.1
+pydantic==2.7.1
+python-magic==0.4.27
+opencv-python-headless==4.13.0.92
+anthropic==0.116.0

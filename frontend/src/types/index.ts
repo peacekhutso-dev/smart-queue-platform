@@ -113,15 +113,47 @@ export interface Document {
   rejectionReason?: string
  }
 
-export type ServiceType = 'SMART_ID' | 'PASSPORT' | 'BIRTH_CERTIFICATE' | 'MARRIAGE_CERTIFICATE' | 'GENERAL_ENQUIRY';
+/** Catalog-driven now — codes come from catalog-service, not a fixed literal set. */
+export type ServiceCode = string;
 
-export const SERVICE_TYPES: { value: ServiceType; label: string; description: string; duration: string }[] = [
-  { value: 'SMART_ID', label: 'Smart ID Card', description: 'First-time applications and re-issues.', duration: '3-5 Weeks' },
-  { value: 'PASSPORT', label: 'Passport', description: 'Apply for a new or renewal passport.', duration: '2-3 Weeks' },
-  { value: 'BIRTH_CERTIFICATE', label: 'Birth Certificate', description: 'Full/Unabridged birth registrations.', duration: '7-10 Days' },
-  { value: 'MARRIAGE_CERTIFICATE', label: 'Marriage Cert.', description: 'Registration and official copies.', duration: '7-10 Days' },
-  { value: 'GENERAL_ENQUIRY', label: 'General Enquiry', description: 'All other enquiries.', duration: 'Same Day' },
-];
+export type FeeType = 'FREE' | 'FIXED' | 'RANGE' | 'VARIES';
+
+export interface DocumentRequirement {
+  id: number;
+  documentCategory: string;
+  label: string;
+  required: boolean;
+  conditionNote?: string;
+}
+
+export interface ServiceOffering {
+  id: number;
+  applicantTypeCode: string;
+  code: ServiceCode;
+  name: string;
+  description?: string;
+  feeType: FeeType;
+  feeMin?: number;
+  feeMax?: number;
+  currency: string;
+  feeNote?: string;
+  /** Server-formatted: "Free" / "R140" / "R70–R140" / "Varies". */
+  feeDisplay: string;
+  estimatedTurnaround?: string;
+  documents: DocumentRequirement[];
+}
+
+export interface ApplicantType {
+  id: number;
+  code: string;
+  displayName: string;
+  description?: string;
+  services: ServiceOffering[];
+}
+
+export interface CatalogResponse {
+  applicantTypes: ApplicantType[];
+}
 
 export const PROVINCES = [
   'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal',

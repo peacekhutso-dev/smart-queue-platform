@@ -1,0 +1,51 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: payment-service
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/${DB_NAME:payment_db}?useSSL=false&serverTimezone=Africa/Johannesburg&allowPublicKeyRetrieval=true
+    username: ${DB_USER:payment_user}
+    password: ${DB_PASS:paymentpassword}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
+
+app:
+  mock-provider:
+    checkout-base-url: ${MOCK_CHECKOUT_BASE_URL:http://localhost:5173/mock-checkout}
+    webhook-secret: ${MOCK_WEBHOOK_SECRET:mock-webhook-secret}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
+
+logging:
+  level:
+    com.dha.payment: DEBUG
+    org.hibernate.SQL: WARN

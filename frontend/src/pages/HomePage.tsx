@@ -1,21 +1,27 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Clock, CreditCard, Plane, Baby, Heart,
+  Clock, CreditCard, Plane, Baby, Heart, FileText,
   ChevronRight, MapPin, Settings, Navigation2,
   Search, X, Loader2, ArrowLeft
 } from 'lucide-react'
 import { useJsApiLoader } from '@react-google-maps/api'
 import { useAuthStore } from '@/store/AuthStore'
+import { useCatalogStore } from '@/store/CatalogStore'
+import type { ServiceOffering } from '@/types'
 
 const LIBRARIES: ('places')[] = ['places']
 
-const SERVICES = [
-  { type: 'SMART_ID',             label: 'Smart ID Card',    desc: 'First-time applications and re-issues.',  time: '3-5 Weeks', icon: CreditCard },
-  { type: 'PASSPORT',             label: 'Passport',          desc: 'Apply for a new or renewal passport.',    time: '2-3 Weeks', icon: Plane      },
-  { type: 'BIRTH_CERTIFICATE',    label: 'Birth Certificate', desc: 'Full/Unabridged birth registrations.',    time: '7-10 Days', icon: Baby       },
-  { type: 'MARRIAGE_CERTIFICATE', label: 'Marriage Cert.',    desc: 'Registration and official copies.',       time: '7-10 Days', icon: Heart      },
-]
+// Presentational only — icon choice per service-code prefix, not DHA
+// business data. Falls back to a generic icon for any unmapped/admin-added
+// service so rendering never breaks.
+const SERVICE_ICON = (code: string) => {
+  if (code.startsWith('SMART_ID') || code === 'TIC') return CreditCard
+  if (code.startsWith('PASSPORT') || code.includes('VISA') || code.includes('TRAVEL')) return Plane
+  if (code.startsWith('BIRTH')) return Baby
+  if (code.startsWith('MARRIAGE')) return Heart
+  return FileText
+}
 
 interface Suggestion {
   placeId: string
@@ -26,6 +32,16 @@ interface Suggestion {
 export default function HomePage() {
   const navigate = useNavigate()
   const user     = useAuthStore((s) => s.user)
+  const { selectedApplicantType, loaded, loading, loadCatalog, setSelectedService, servicesForSelectedApplicantType } = useCatalogStore()
+  const services = servicesForSelectedApplicantType()
+
+  useEffect(() => {
+    loadCatalog()
+  }, [loadCatalog])
+
+  useEffect(() => {
+    if (loaded && !selectedApplicantType) navigate('/applicant-type', { replace: true })
+  }, [loaded, selectedApplicantType, navigate])
 
   const [selected, setSelected]       = useState<string | null>(null)
   const [location, setLocation]       = useState<string | null>(null)
@@ -124,27 +140,30 @@ export default function HomePage() {
   }
 
   const handleProceed = () => {
-    if (!selected) return
-    navigate(`/documents?serviceType=${selected}`)
+    const service = services.find((s: ServiceOffering) => s.code === selected)
+    if (!service) return
+    setSelectedService(service)
+    navigate(`/documents?serviceType=${service.code}`)
   }
 
   return (
     <div className="flex flex-col min-h-0">
 
       {/* ── Header ── */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+      <div className="flex items-center justify-between px-5 md:px-8 h-20 border-b border-gray-100">
         <span className="text-base font-semibold text-gray-900">Department of Home Affairs</span>
         <button onClick={() => navigate('/settings')} className="p-1.5 rounded-full hover:bg-gray-100 transition-colors">
           <Settings className="w-5 h-5 text-gray-500" />
         </button>
       </div>
 
-      <div className="px-5 py-4 flex flex-col gap-5 pb-24">
+      <div className="h-px bg-gray-200" />
 
-        {/* ── Uber-style location row ── */}
+      {/* ── Location row ── */}
+      <div className="px-5 md:px-8 py-4 border-b border-gray-100">
         <button
           onClick={() => setSheetOpen(true)}
-          className="flex items-center gap-3 bg-gray-100 hover:bg-gray-200 transition-colors rounded-2xl px-4 py-3.5 w-full text-left"
+          className="flex items-center gap-3 bg-white border-2 border-gray-200 hover:border-gray-300 transition-colors rounded-2xl px-4 py-3.5 w-full text-left"
         >
           <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center shrink-0">
             <MapPin className="w-4 h-4 text-white" />
@@ -157,6 +176,9 @@ export default function HomePage() {
           </div>
           <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
         </button>
+      </div>
+
+      <div className="px-5 md:px-8 py-4 md:py-6 flex flex-col gap-5 pb-8 w-full">
 
         {/* ── Services grid ── */}
         <div>
@@ -165,29 +187,47 @@ export default function HomePage() {
             <button className="text-sm text-green-500 font-semibold">View Requirements</button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            {SERVICES.map(({ type, label, desc, time, icon: Icon }) => (
-              <button
-                key={type}
-                onClick={() => setSelected(type)}
-                className={`text-left border-2 rounded-2xl p-4 transition-all duration-200 ${
-                  selected === type ? 'border-green-500 bg-green-50' : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${selected === type ? 'bg-green-100' : 'bg-gray-100'}`}>
-                    <Icon className={`w-5 h-5 ${selected === type ? 'text-green-600' : 'text-gray-500'}`} />
+          {loading && services.length === 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-32 rounded-2xl" />)}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {services.map((service: ServiceOffering) => {
+              const Icon = SERVICE_ICON(service.code)
+              return (
+                <button
+                  key={service.code}
+                  onClick={() => setSelected(service.code)}
+                  className={`text-left border-2 rounded-2xl p-4 transition-all duration-200 ${
+                    selected === service.code ? 'border-green-500 bg-green-50' : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${selected === service.code ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <Icon className={`w-5 h-5 ${selected === service.code ? 'text-green-600' : 'text-gray-500'}`} />
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400" />
                   </div>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </div>
-                <p className="text-sm font-bold text-gray-900">{label}</p>
-                <p className="text-xs text-gray-500 mt-0.5 leading-snug">{desc}</p>
-                <div className="flex items-center gap-1 mt-2">
-                  <Clock className="w-3 h-3 text-gray-400" />
-                  <span className="text-xs text-gray-400">{time}</span>
-                </div>
-              </button>
-            ))}
+                  <p className="text-sm font-bold text-gray-900">{service.name}</p>
+                  {service.description && (
+                    <p className="text-xs text-gray-500 mt-0.5 leading-snug">{service.description}</p>
+                  )}
+                  <div className="flex items-center justify-between mt-2">
+                    {service.estimatedTurnaround ? (
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-gray-400" />
+                        <span className="text-xs text-gray-400">{service.estimatedTurnaround}</span>
+                      </div>
+                    ) : <span />}
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200">
+                      {service.feeDisplay}
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -199,7 +239,7 @@ export default function HomePage() {
             selected ? 'bg-green-500 text-white hover:bg-green-600 active:scale-95' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
           }`}
         >
-          {selected ? `Continue with ${SERVICES.find((s) => s.type === selected)?.label}` : 'Please select a service'}
+          {selected ? `Continue with ${services.find((s: ServiceOffering) => s.code === selected)?.name}` : 'Please select a service'}
         </button>
       </div>
 

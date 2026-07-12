@@ -3,7 +3,8 @@ import {
   LoginRequest, OtpVerifyRequest, SaIdVerifyRequest,
   FaceVerifyRequest, QueueEntry, Branch, Document,
   FeedbackRequest, ChatMessage, WaitTimePredictionRequest,
-  WaitTimePredictionResponse, ApiResponse, User, Application, ServiceType
+  WaitTimePredictionResponse, ApiResponse, User, Application, ServiceCode,
+  CatalogResponse
 } from '@/types'
 
 
@@ -40,7 +41,7 @@ export const userService = {
 
 // ── APPLICATIONS ──────────────────────────────────────
 export const applicationService = {
-  create: (data: { serviceType: ServiceType; branchId: string }) =>
+  create: (data: { serviceType: ServiceCode; branchId: string }) =>
     api.post<ApiResponse<Application>>('/applications', data),
 
   getMyApplications: () =>
@@ -52,7 +53,7 @@ export const applicationService = {
 
 // ── QUEUE ──────────────────────────────────────────────
 export const queueService = {
-  join: (data: { branchId: string; serviceType: ServiceType }) =>
+  join: (data: { branchId: string; serviceType: ServiceCode }) =>
     api.post<ApiResponse<QueueEntry>>('/queue/join', data),
 
   getMyTicket: () =>
@@ -89,6 +90,12 @@ export const documentService = {
 
   delete: (id: string) =>
     api.delete<ApiResponse<void>>(`/documents/${id}`),
+}
+
+// ── CATALOG ──────────────────────────────────────────
+export const catalogService = {
+  getCatalog: () =>
+    api.get<ApiResponse<CatalogResponse>>('/catalog'),
 }
 
 // ── FEEDBACK ──────────────────────────────────────────

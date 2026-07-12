@@ -1,0 +1,254 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api-gateway: ${{ steps.filter.outputs.api-gateway }}
+      payment-service: ${{ steps.filter.outputs.payment-service }}
+      notification-gateway: ${{ steps.filter.outputs.notification-gateway }}
+      identity-service: ${{ steps.filter.outputs.identity-service }}
+      verification-service: ${{ steps.filter.outputs.verification-service }}
+      branch-service: ${{ steps.filter.outputs.branch-service }}
+      queue-service: ${{ steps.filter.outputs.queue-service }}
+      document-service: ${{ steps.filter.outputs.document-service }}
+      feedback-service: ${{ steps.filter.outputs.feedback-service }}
+      catalog-service: ${{ steps.filter.outputs.catalog-service }}
+      ml-service: ${{ steps.filter.outputs.ml-service }}
+      face-service: ${{ steps.filter.outputs.face-service }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api-gateway:
+              - 'api-gateway/**'
+            payment-service:
+              - 'payment-service/**'
+            notification-gateway:
+              - 'notification-gateway/**'
+            identity-service:
+              - 'identity-service/**'
+            verification-service:
+              - 'verification-service/**'
+            branch-service:
+              - 'branch-service/**'
+            queue-service:
+              - 'queue-service/**'
+            document-service:
+              - 'document-service/**'
+            feedback-service:
+              - 'feedback-service/**'
+            catalog-service:
+              - 'catalog-service/**'
+            ml-service:
+              - 'ml-service/**'
+            face-service:
+              - 'face-service/**'
+            frontend:
+              - 'frontend/**'
+
+  api-gateway:
+    needs: changes
+    if: needs.changes.outputs.api-gateway == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: api-gateway
+        run: mvn -B clean verify
+
+  payment-service:
+    needs: changes
+    if: needs.changes.outputs.payment-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: payment-service
+        run: mvn -B clean verify
+
+  notification-gateway:
+    needs: changes
+    if: needs.changes.outputs.notification-gateway == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: notification-gateway
+        run: mvn -B clean verify
+
+  identity-service:
+    needs: changes
+    if: needs.changes.outputs.identity-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: identity-service
+        run: mvn -B clean verify
+
+  verification-service:
+    needs: changes
+    if: needs.changes.outputs.verification-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: verification-service
+        run: mvn -B clean verify
+
+  branch-service:
+    needs: changes
+    if: needs.changes.outputs.branch-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: branch-service
+        run: mvn -B clean verify
+
+  queue-service:
+    needs: changes
+    if: needs.changes.outputs.queue-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: queue-service
+        run: mvn -B clean verify
+
+  document-service:
+    needs: changes
+    if: needs.changes.outputs.document-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: document-service
+        run: mvn -B clean verify
+
+  feedback-service:
+    needs: changes
+    if: needs.changes.outputs.feedback-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: feedback-service
+        run: mvn -B clean verify
+
+  catalog-service:
+    needs: changes
+    if: needs.changes.outputs.catalog-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+      - name: Build and test
+        working-directory: catalog-service
+        run: mvn -B clean verify
+
+  ml-service:
+    needs: changes
+    if: needs.changes.outputs.ml-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: ml-service
+        run: pip install -r requirements.txt
+      - name: Import check
+        working-directory: ml-service
+        run: python -c "import app.main"
+
+  face-service:
+    needs: changes
+    if: needs.changes.outputs.face-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        working-directory: face-service
+        run: pip install -r requirements.txt
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build
+        working-directory: frontend
+        run: npm run build

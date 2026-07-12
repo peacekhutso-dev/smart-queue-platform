@@ -47,7 +47,7 @@ export default function FeedbackPage() {
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white flex items-center justify-between px-5 py-4 border-b border-gray-100">
+      <div className="bg-white flex items-center justify-between px-5 h-20 border-b border-gray-100">
         <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center">
           <Shield className="w-5 h-5 text-white" />
         </div>
@@ -55,7 +55,7 @@ export default function FeedbackPage() {
         <div className="w-9" />
       </div>
 
-      <div className="px-5 py-4 flex flex-col gap-5 pb-24">
+      <div className="px-5 md:px-8 py-4 md:py-6 flex flex-col gap-5 pb-8 max-w-3xl mx-auto w-full">
         {/* Service chip */}
         <div>
           <span className="text-xs bg-green-50 border border-green-200 text-green-600 font-semibold px-3 py-1 rounded-full">
