@@ -12,10 +12,10 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Verifies a live selfie against a citizen's DHA record photo — the face
- * photo from their verified SA ID/passport document, fetched fresh from
- * document-service on every call (see FaceVerificationService). There is no
- * enrollment endpoint: a citizen with no verified ID document on file has
+ * Verifies a live selfie against the photo on the citizen's Home Affairs
+ * record, fetched fresh from identity-service on every call (see
+ * FaceVerificationService). There is no enrollment endpoint: a citizen whose
+ * record has no photo on file has
  * nothing to verify against, so that request is rejected rather than ever
  * treated as a pass. The Gateway's ZeroTrustGlobalFilter already required a
  * valid JWT to reach here (GATE1_ONLY tier — this endpoint is what *grants*
@@ -45,11 +45,11 @@ public class FaceVerificationController {
                     .build());
         }
 
-        if (result.noDocumentOnFile()) {
+        if (result.noDhaPhoto()) {
             return ResponseEntity.badRequest().body(ApiResponse.<Map<String, Object>>builder()
                     .success(false)
                     .message(result.message())
-                    .data(Map.of("code", "NO_ID_DOCUMENT"))
+                    .data(Map.of("code", "NO_DHA_PHOTO"))
                     .build());
         }
 

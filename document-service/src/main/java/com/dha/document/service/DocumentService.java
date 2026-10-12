@@ -20,11 +20,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -45,14 +43,6 @@ public class DocumentService {
     private static final String UPLOAD_DIR = "uploads/documents/";
     private static final long MAX_SIZE = 10 * 1024 * 1024; // 10MB
     private static final List<String> ALLOWED_TYPES = List.of("application/pdf", "image/jpeg", "image/png", "image/jpg");
-
-    // Document types that carry a face photo — the DHA record used for face
-    // verification. SA_ID is the legacy type (see DocumentType) but still
-    // photo-bearing for citizens with old rows.
-    private static final List<Document.DocumentType> FACE_PHOTO_DOCUMENT_TYPES = List.of(
-            Document.DocumentType.SA_ID, Document.DocumentType.SA_SMART_ID,
-            Document.DocumentType.GREEN_BARCODED_ID_BOOK,
-            Document.DocumentType.PASSPORT, Document.DocumentType.FOREIGN_PASSPORT);
 
     @Transactional
     public DocumentResponse uploadDocument(MultipartFile file, String documentType, UUID userId) throws IOException {
@@ -168,30 +158,6 @@ public class DocumentService {
 
         document = documentRepository.save(document);
         return mapToResponse(document);
-    }
-
-    public record FacePhoto(String imageBase64, String contentType) {
-    }
-
-    /**
-     * The DHA record photo for face verification: the newest passed-validation
-     * photo-bearing ID document (SA ID/passport) on file for this userId, read
-     * straight off disk. Empty if the citizen has no such document yet — the
-     * caller (verification-service, via the /face-photo endpoint) must treat
-     * that as "nothing to verify against" rather than any kind of pass.
-     */
-    public Optional<FacePhoto> getFacePhoto(UUID userId) throws IOException {
-        Optional<Document> doc = documentRepository
-                .findByUserIdAndDocumentTypeInAndValidationStatusOrderByUploadedAtDesc(
-                        userId, FACE_PHOTO_DOCUMENT_TYPES, Document.ValidationStatus.VALID)
-                .stream()
-                .filter(d -> d.getFileType() != null && d.getFileType().startsWith("image/"))
-                .findFirst();
-
-        if (doc.isEmpty()) return Optional.empty();
-
-        byte[] bytes = Files.readAllBytes(Paths.get(doc.get().getFilePath()));
-        return Optional.of(new FacePhoto(Base64.getEncoder().encodeToString(bytes), doc.get().getFileType()));
     }
 
     /**

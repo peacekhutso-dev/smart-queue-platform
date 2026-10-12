@@ -1,6 +1,6 @@
 package com.dha.verification.service;
 
-import com.dha.verification.client.DocumentServiceClient;
+import com.dha.verification.client.IdentityServiceClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,7 +13,6 @@ import org.springframework.web.client.RestTemplate;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -22,13 +21,10 @@ public class FaceVerificationService {
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final RestTemplate restTemplate;
-    private final DocumentServiceClient documentServiceClient;
+    private final IdentityServiceClient identityServiceClient;
 
     @Value("${app.face.service-url:http://localhost:8002}")
     private String faceServiceUrl;
-
-    @Value("${app.face.session-ttl-hours:4}")
-    private int sessionTtlHours;
 
     @Value("${app.face.dev-bypass:false}")
     private boolean devBypass;
@@ -38,16 +34,16 @@ public class FaceVerificationService {
 
     private static final String FACE_SESSION_PREFIX = "face:";
 
-    public record VerifyResult(boolean verified, String message, boolean livenessFailed, boolean noDocumentOnFile) {}
+    public record VerifyResult(boolean verified, String message, boolean livenessFailed, boolean noDhaPhoto) {}
 
     // ── Verification against the DHA record ────────────────────────────────────
-    // DHA already has the citizen's photo on file — the face photo from their
-    // verified SA ID/passport upload in document-service. Every call here
-    // fetches that photo fresh and hands both it and the live capture to
-    // face-service to compare; nothing is enrolled or persisted as a side
-    // effect of a scan. A citizen with no verified ID document on file yet has
-    // nothing to verify against, so that's rejected here before ever reaching
-    // face-service.
+    // Home Affairs already has the citizen's photo — it's on their record in
+    // identity-service's population register, keyed by the SA ID on their
+    // account (loaded by DHA, never by the citizen). Every call fetches that
+    // photo fresh and hands it and the live capture to face-service to
+    // compare; nothing is enrolled or persisted as a side effect of a scan.
+    // With no photo on the record there's nothing to verify against, so
+    // that's rejected before ever reaching face-service.
 
     public VerifyResult verifyFace(UUID userId, String imageBase64) {
         if (devBypass) {
@@ -66,10 +62,12 @@ public class FaceVerificationService {
             return new VerifyResult(false, "Liveness check failed — please use a live camera capture", true, false);
         }
 
-        Optional<DocumentServiceClient.FacePhoto> facePhoto = documentServiceClient.getFacePhoto(userId);
+        Optional<IdentityServiceClient.CitizenPhoto> facePhoto = identityServiceClient.getCitizenPhoto(userId);
         if (facePhoto.isEmpty()) {
-            log.warn("No verified ID document on file for userId={} — nothing to verify against", userId);
-            return new VerifyResult(false, "No verified ID document on file yet — please complete ID verification first", false, true);
+            log.warn("No Home Affairs photo on record for userId={} — nothing to verify against", userId);
+            return new VerifyResult(false,
+                    "Your Home Affairs record has no photo on file yet, so your face can't be verified. Please sign out and try again later.",
+                    false, true);
         }
 
         try {
@@ -117,9 +115,12 @@ public class FaceVerificationService {
 
     // ── Redis session helpers ─────────────────────────────────────────────────
 
+    // No TTL: the face session lasts for the whole login session. It's
+    // cleared by identity-service on the next login, so every login still
+    // needs a fresh scan, and the JWT's own expiry bounds a session.
     public void grantSession(UUID userId) {
-        redisTemplate.opsForValue().set(FACE_SESSION_PREFIX + userId, "verified", sessionTtlHours, TimeUnit.HOURS);
-        log.info("Face session granted userId={} TTL={}h", userId, sessionTtlHours);
+        redisTemplate.opsForValue().set(FACE_SESSION_PREFIX + userId, "verified");
+        log.info("Face session granted userId={}", userId);
     }
 
     public void revokeSession(UUID userId) {

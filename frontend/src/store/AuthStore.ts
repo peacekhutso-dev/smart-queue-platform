@@ -12,7 +12,8 @@ interface AuthUser {
 }
 
 const TWO_FA_TTL_MS = 8  * 60 * 60 * 1000   // 8 hours
-const FACE_TTL_MS   = 4  * 60 * 60 * 1000   // 4 hours
+// The face session has no TTL — it lasts until the next login/logout
+// (identity-service clears the server-side face gate on every login).
 
 interface AuthState {
   user:      AuthUser | null
@@ -77,17 +78,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     return !!at && (Date.now() - at < TWO_FA_TTL_MS)
   },
 
-  isFaceValid: () => {
-    const at = get().faceVerifiedAt
-    return !!at && (Date.now() - at < FACE_TTL_MS)
-  },
+  isFaceValid: () => !!get().faceVerifiedAt,
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
+  // A new login/registration starts without a face session — the server
+  // clears its face gate on login, so the local hint must match.
   setAuth: (user) => {
     localStorage.setItem(AUTHED_HINT_KEY, '1')
     localStorage.setItem('dha_user', JSON.stringify(user))
-    set({ user, isAuthenticated: true })
+    localStorage.removeItem('dha_face_at')
+    set({ user, isAuthenticated: true, faceVerifiedAt: null })
   },
 
   setPending: (phone) => set({ pendingPhone: phone }),

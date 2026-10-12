@@ -14,48 +14,45 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Fetches the DHA record photo (the citizen's verified SA ID/passport photo)
- * from document-service — service-to-service, not through the Gateway, the
- * same way FaceVerificationService calls face-service directly. Sets
- * X-User-Id/X-User-Role itself (there's no inbound JWT here to forward)
- * alongside X-Gateway-Secret, which is exactly what document-service's
- * HeaderAuthFilter requires to trust an asserted identity.
+ * Fetches the photo Home Affairs holds for a citizen (their record in
+ * identity-service's simulated population register, looked up by the SA ID
+ * on their account) — service-to-service via identity-service's
+ * /internal/citizen-photo, which the Gateway doesn't route. Citizens never
+ * supply this photo themselves.
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class DocumentServiceClient {
+public class IdentityServiceClient {
 
     private final RestTemplate restTemplate;
 
-    @Value("${app.document.service-url:http://localhost:8089}")
-    private String documentServiceUrl;
+    @Value("${app.identity.service-url:http://localhost:8085}")
+    private String identityServiceUrl;
 
     @Value("${app.gateway.shared-secret}")
     private String gatewaySharedSecret;
 
-    public record FacePhoto(String imageBase64, String contentType) {
+    public record CitizenPhoto(String imageBase64, String contentType) {
     }
 
     @SuppressWarnings("unchecked")
-    public Optional<FacePhoto> getFacePhoto(UUID userId) {
+    public Optional<CitizenPhoto> getCitizenPhoto(UUID userId) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Gateway-Secret", gatewaySharedSecret);
-        headers.set("X-User-Id", userId.toString());
-        headers.set("X-User-Role", "CITIZEN");
 
         try {
             ResponseEntity<Map> res = restTemplate.exchange(
-                    documentServiceUrl + "/api/documents/face-photo",
+                    identityServiceUrl + "/internal/citizen-photo?userId=" + userId,
                     HttpMethod.GET, new HttpEntity<>(headers), Map.class);
 
             Map<?, ?> data = res.getBody() != null ? (Map<?, ?>) res.getBody().get("data") : null;
             if (data == null) return Optional.empty();
-            return Optional.of(new FacePhoto((String) data.get("imageBase64"), (String) data.get("contentType")));
+            return Optional.of(new CitizenPhoto((String) data.get("imageBase64"), (String) data.get("contentType")));
         } catch (HttpClientErrorException.NotFound e) {
             return Optional.empty();
         } catch (RestClientException e) {
-            log.error("document-service unreachable fetching face photo userId={}: {}", userId, e.getMessage());
+            log.error("identity-service unreachable fetching citizen photo userId={}: {}", userId, e.getMessage());
             return Optional.empty();
         }
     }

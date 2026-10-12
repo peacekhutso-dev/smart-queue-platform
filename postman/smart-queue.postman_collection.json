@@ -157,27 +157,6 @@
       "response": []
     },
     {
-      "name": "4b. Upload ID document (needed before Face Verify can actually match)",
-      "request": {
-        "method": "POST",
-        "header": [],
-        "body": {
-          "mode": "formdata",
-          "formdata": [
-            { "key": "documentType", "value": "SA_SMART_ID", "type": "text" },
-            { "key": "file", "type": "file", "src": [] }
-          ]
-        },
-        "url": {
-          "raw": "{{baseUrl}}/api/documents/upload",
-          "host": ["{{baseUrl}}"],
-          "path": ["api", "documents", "upload"]
-        },
-        "description": "In Postman, click the 'file' row's Select Files button and pick a real ID/face photo from disk — collection JSON can't carry a file path for you. document-service runs it through ml-service's classification/quality checks; if it's accepted, its photo becomes what Face Verify (step 5) compares your live scan against."
-      },
-      "response": []
-    },
-    {
       "name": "5. Face Verify (grants face gate)",
       "request": {
         "method": "POST",
@@ -192,7 +171,7 @@
           "host": ["{{baseUrl}}"],
           "path": ["api", "auth", "face", "verify"]
         },
-        "description": "On Mac, generate the base64 with: base64 -i photo.jpg | pbcopy, then paste over the placeholder.\n\nverification-service currently checks the live scan against a citizen's verified ID document photo on file in document-service. If none is uploaded/verified yet for this account, expect 400 with code NO_ID_DOCUMENT — that's correct, testable behavior, not a bug."
+        "description": "On Mac, generate the base64 with: base64 -i photo.jpg | pbcopy, then paste over the placeholder.\n\nverification-service checks the live scan against the photo on the citizen's Home Affairs record (identity-service), matched by the SA ID on this account. Citizens never upload it: an admin loads it in the admin dashboard's Citizen Records dev tool. If that record has no photo yet, expect 400 with code NO_DHA_PHOTO. That's correct, testable behavior, not a bug."
       },
       "response": []
     },

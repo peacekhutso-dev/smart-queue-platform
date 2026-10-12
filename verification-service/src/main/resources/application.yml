@@ -17,12 +17,11 @@ app:
     shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
   face:
     service-url: ${FACE_SERVICE_URL:http://localhost:8002}
-    session-ttl-hours: ${FACE_SESSION_TTL_HOURS:4}
     dev-bypass: ${FACE_DEV_BYPASS:false}
-  document:
-    # The DHA record photo (verified SA ID/passport upload) that a live face
-    # scan gets compared against — see DocumentServiceClient.
-    service-url: ${DOCUMENT_SERVICE_URL:http://localhost:8089}
+  identity:
+    # The Home Affairs photo on the citizen's record that a live face scan
+    # gets compared against — see IdentityServiceClient.
+    service-url: ${IDENTITY_SERVICE_URL:http://localhost:8085}
 
 management:
   endpoints:

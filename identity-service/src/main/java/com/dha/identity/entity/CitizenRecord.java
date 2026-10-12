@@ -10,11 +10,11 @@ import java.time.LocalDateTime;
 
 /**
  * Home Affairs' own record of a citizen — the National Population Register,
- * simplified for this prototype. Never written to via any API: this is
- * seeded data only (see seed.CitizenRecordSeeder), representing information
- * Home Affairs already holds, the same way document-service's seeded ID
- * document photo represents the DHA record a live face scan is checked
- * against. A citizen logging in must state their SA ID number and name
+ * simplified for this prototype. Seeded by seed.CitizenRecordSeeder, and
+ * (DEV ONLY) editable by an admin through the admin dashboard's "Citizen
+ * Records" tool, which stands in for DHA's own systems. Citizens can never
+ * write to it. The matching ID photo lives in CitizenPhoto and is what a live
+ * face scan is checked against. A citizen logging in must state their SA ID number and name
  * matching a row here — proving they are who Home Affairs says that ID
  * belongs to — not the other way around.
  */

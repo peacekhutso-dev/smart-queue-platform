@@ -223,7 +223,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      document-service:
+      identity-service:
         condition: service_started
       face-service:
         condition: service_started
@@ -233,7 +233,8 @@ services:
       REDIS_PORT: 6379
       FACE_SERVICE_URL: http://face-service:8002
       FACE_DEV_BYPASS: ${FACE_DEV_BYPASS:-false}
-      DOCUMENT_SERVICE_URL: http://document-service:8089
+      # Home Affairs record photo the live scan is compared against.
+      IDENTITY_SERVICE_URL: http://identity-service:8085
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 384m }

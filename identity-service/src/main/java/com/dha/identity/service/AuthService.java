@@ -32,6 +32,9 @@ public class AuthService {
 
     /** Mirrors ZeroTrustGlobalFilter's IDENTITY_PREFIX (api-gateway) — same convention as TWO_FA_PREFIX above. */
     private static final String IDENTITY_CONFIRMED_PREFIX = "identity-confirmed:";
+    // Written by verification-service with no TTL; cleared here on every
+    // login so each login needs a fresh face scan.
+    private static final String FACE_PREFIX = "face:";
 
     private final UserRepository userRepository;
     private final CitizenRecordRepository citizenRecordRepository;
@@ -126,6 +129,7 @@ public class AuthService {
         // action with nowhere to go, since login itself doesn't ask for OTP.
         String twoFaKey = TWO_FA_PREFIX + user.getId();
         redisTemplate.opsForValue().set(twoFaKey, "verified", twoFaTtlHours, TimeUnit.HOURS);
+        redisTemplate.delete(FACE_PREFIX + user.getId());
         String token = issueToken(user);
         return buildAuthResponse(user, token);
     }

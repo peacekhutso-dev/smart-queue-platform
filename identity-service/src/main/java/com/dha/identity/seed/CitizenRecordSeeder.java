@@ -16,9 +16,9 @@ import java.time.LocalDate;
  * citizen a login's "confirm your identity" step (AuthService.confirmIdentity)
  * can match against. Ten dev/test identities below — register in the
  * frontend with the exact first/last name + SA ID number for whichever one
- * you want to test as (see document-service's seeded reference photo, which
- * is linked to whichever of these accounts actually get registered — one
- * shared photo works for all of them since there's only one real tester).
+ * you want to test as. No photos are seeded: an admin adds each citizen's
+ * photo through the admin dashboard's "Citizen Records" dev tool, and face
+ * verification fails closed until one is on file.
  */
 @Component
 @RequiredArgsConstructor
