@@ -13,6 +13,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage'
 
 // App screens — lazy is fine for these
 const FaceVerifyPage  = lazy(() => import('./pages/FaceVerifyPage'))
+const WelcomePage     = lazy(() => import('./pages/WelcomePage'))
 const ApplicantTypePage = lazy(() => import('./pages/ApplicantTypePage'))
 const HomePage        = lazy(() => import('./pages/HomePage'))
 const DocumentsPage   = lazy(() => import('./pages/DocumentsPage'))
@@ -84,6 +85,7 @@ export default function App() {
 
             {/* Protected app screens */}
             <Route element={<ProtectedLayout />}>
+              <Route path="/welcome"      element={<WelcomePage />} />
               <Route path="/applicant-type" element={<ApplicantTypePage />} />
               <Route path="/home"         element={<HomePage />} />
               <Route path="/documents"    element={<DocumentsPage />} />

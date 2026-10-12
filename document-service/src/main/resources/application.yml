@@ -31,6 +31,13 @@ app:
   # not through the Gateway. Fails open if unreachable (see MlServiceClient).
   ml-service:
     url: ${ML_SERVICE_URL:http://localhost:8001}
+  document:
+    # Dev-only: skips the AI classification/quality gate entirely so every
+    # upload lands as VALID/IN_REVIEW without calling ml-service at all.
+    # Never set true in a real deployment.
+    skip-ml-check: ${DOCUMENT_SKIP_ML_CHECK:false}
+  gateway:
+    shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
 
 management:
   endpoints:

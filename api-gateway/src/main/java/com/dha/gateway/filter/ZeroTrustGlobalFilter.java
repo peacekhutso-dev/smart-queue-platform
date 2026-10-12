@@ -11,6 +11,7 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -51,16 +52,22 @@ public class ZeroTrustGlobalFilter implements GlobalFilter, Ordered {
     @Value("${app.zero-trust.dev-bypass:false}")
     private boolean devBypass;
 
+    @Value("${app.gateway.shared-secret}")
+    private String gatewaySharedSecret;
+
     private static final String TWO_FA_PREFIX = "2fa:";
+    private static final String IDENTITY_PREFIX = "identity-confirmed:";
     private static final String FACE_PREFIX = "face:";
     private static final String FINGERPRINT_PREFIX = "fingerprint:";
 
     private static final List<String> NO_AUTH_PREFIXES = List.of(
+            "/api/auth/check-availability",
             "/api/auth/register",
             "/api/auth/login",
             "/api/auth/send-otp",
             "/api/auth/forgot-password",
             "/api/auth/reset-password",
+            "/api/auth/logout",
             "/api/payments/webhooks",
             "/ws",
             "/actuator",
@@ -70,10 +77,13 @@ public class ZeroTrustGlobalFilter implements GlobalFilter, Ordered {
     private static final List<String> GATE1_ONLY_PREFIXES = List.of(
             "/api/auth/verify-otp",
             "/api/auth/verify-id",
+            "/api/auth/confirm-identity",
             "/api/auth/me",
             "/api/auth/webauthn",
             "/api/auth/face"
     );
+
+    private static final String TOKEN_COOKIE_NAME = "dha_token";
 
     @Override
     public int getOrder() {
@@ -94,12 +104,11 @@ public class ZeroTrustGlobalFilter implements GlobalFilter, Ordered {
         // dev-bypass — dev-bypass only skips the 2FA/face/fingerprint Redis
         // checks below. Without this, downstream services never learn who's
         // calling and reject everything themselves.
-        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        String token = extractToken(exchange);
+        if (token == null) {
             return reject(exchange, HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "Authentication required");
         }
 
-        String token = authHeader.substring(7);
         boolean skipGates2And3 = devBypass || matches(path, GATE1_ONLY_PREFIXES);
 
         return jwtVerifier.verify(token)
@@ -107,9 +116,25 @@ public class ZeroTrustGlobalFilter implements GlobalFilter, Ordered {
                         ? forward(exchange, chain, identity)
                         : enforceZeroTrustGates(exchange, chain, identity))
                 .onErrorResume(e -> {
-                    log.debug("JWT verification failed: {}", e.getMessage());
+                    log.warn("JWT verification failed path={} reason={}", path, e.getMessage());
                     return reject(exchange, HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "Invalid or expired token");
                 });
+    }
+
+    // The frontend now carries its session in an httpOnly dha_token cookie
+    // (not readable/settable by JS, so not stealable via XSS the way a
+    // localStorage token was) — checked first. Authorization: Bearer is kept
+    // as a fallback for non-browser callers (mobile clients, API testing).
+    private String extractToken(ServerWebExchange exchange) {
+        HttpCookie cookie = exchange.getRequest().getCookies().getFirst(TOKEN_COOKIE_NAME);
+        if (cookie != null && !cookie.getValue().isBlank()) {
+            return cookie.getValue();
+        }
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7);
+        }
+        return null;
     }
 
     private Mono<Void> enforceZeroTrustGates(ServerWebExchange exchange, GatewayFilterChain chain, VerifiedIdentity identity) {
@@ -124,30 +149,59 @@ public class ZeroTrustGlobalFilter implements GlobalFilter, Ordered {
                     if (!Boolean.TRUE.equals(has2fa)) {
                         return reject(exchange, HttpStatus.FORBIDDEN, "REQUIRES_2FA", "Two-factor authentication required");
                     }
-                    return redisTemplate.hasKey(gate3Key).flatMap(hasGate3 -> {
-                        if (!Boolean.TRUE.equals(hasGate3)) {
-                            return reject(exchange, HttpStatus.FORBIDDEN, gate3Code, gate3Msg);
+                    // Gate 1.5: login must have confirmed the citizen's SA ID
+                    // + name against Home Affairs' own (seeded) record — see
+                    // identity-service's AuthService.confirmIdentity. Staff/admin
+                    // aren't citizens in this system's population-register
+                    // concept, so this gate doesn't apply to them (same
+                    // isStaff branch already used for gate 3 below).
+                    if (isStaff) {
+                        return enforceGate3(exchange, chain, identity, gate3Key, gate3Code, gate3Msg);
+                    }
+                    return redisTemplate.hasKey(IDENTITY_PREFIX + userId).flatMap(hasIdentity -> {
+                        if (!Boolean.TRUE.equals(hasIdentity)) {
+                            return reject(exchange, HttpStatus.FORBIDDEN, "REQUIRES_IDENTITY_CONFIRMATION",
+                                    "Please confirm your identity against your Home Affairs record");
                         }
-                        return forward(exchange, chain, identity);
+                        return enforceGate3(exchange, chain, identity, gate3Key, gate3Code, gate3Msg);
                     });
                 });
     }
 
+    private Mono<Void> enforceGate3(ServerWebExchange exchange, GatewayFilterChain chain, VerifiedIdentity identity,
+                                     String gate3Key, String gate3Code, String gate3Msg) {
+        return redisTemplate.hasKey(gate3Key).flatMap(hasGate3 -> {
+            if (!Boolean.TRUE.equals(hasGate3)) {
+                return reject(exchange, HttpStatus.FORBIDDEN, gate3Code, gate3Msg);
+            }
+            return forward(exchange, chain, identity);
+        });
+    }
+
     private Mono<Void> forward(ServerWebExchange exchange, GatewayFilterChain chain, VerifiedIdentity identity) {
+        log.info("Gate PASSED userId={} role={} method={} path={}",
+                identity.userId(), identity.role(),
+                exchange.getRequest().getMethod(), exchange.getRequest().getURI().getPath());
         ServerHttpRequest mutated = stripSpoofableHeaders(exchange).getRequest().mutate()
                 .header("X-User-Id", identity.userId().toString())
                 .header("X-User-Email", identity.email())
                 .header("X-User-Role", identity.role())
+                .header("X-Gateway-Secret", gatewaySharedSecret)
                 .build();
         return chain.filter(exchange.mutate().request(mutated).build());
     }
 
+    // Strips any client-supplied identity/secret headers so a caller can't
+    // spoof the Gateway's own trust signal to a downstream service, even if
+    // that service is reachable directly (see HeaderAuthFilter in each
+    // downstream service, which rejects requests missing X-Gateway-Secret).
     private ServerWebExchange stripSpoofableHeaders(ServerWebExchange exchange) {
         ServerHttpRequest stripped = exchange.getRequest().mutate()
                 .headers(h -> {
                     h.remove("X-User-Id");
                     h.remove("X-User-Email");
                     h.remove("X-User-Role");
+                    h.remove("X-Gateway-Secret");
                 })
                 .build();
         return exchange.mutate().request(stripped).build();
@@ -158,6 +212,9 @@ public class ZeroTrustGlobalFilter implements GlobalFilter, Ordered {
     }
 
     private Mono<Void> reject(ServerWebExchange exchange, HttpStatus status, String code, String message) {
+        log.warn("Gate REJECTED method={} path={} status={} code={} reason=\"{}\"",
+                exchange.getRequest().getMethod(), exchange.getRequest().getURI().getPath(),
+                status.value(), code, message);
         ServerHttpResponse response = exchange.getResponse();
         response.setStatusCode(status);
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);

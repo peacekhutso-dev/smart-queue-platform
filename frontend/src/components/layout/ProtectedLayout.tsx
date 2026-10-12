@@ -39,11 +39,15 @@ function SidebarLink({ to, icon: Icon, label }: { to: string; icon: React.Elemen
 export default function ProtectedLayout() {
   const { isAuthenticated, isTwoFaValid, isFaceValid } = useAuthStore()
 
-  // DEV BYPASS — remove these comments to re-enable auth gates
-  // if (!isAuthenticated) return <Navigate to="/login" replace />
-  // if (!isTwoFaValid()) return <Navigate to="/verify-otp?session=true" replace />
-  // if (!isFaceValid()) return <Navigate to="/verify-face?mode=verify" replace />
-  void isAuthenticated; void isTwoFaValid; void isFaceValid
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  // isTwoFaValid stays unenforced here: it mirrors a server-side Redis gate
+  // that's only ever granted by /verify-otp during registration (an 8h TTL —
+  // see identity-service's twoFaTtlHours) and login never re-grants it, so a
+  // returning citizen past that window would get bounced into an OTP step
+  // the login flow doesn't actually offer. That's a real gap, but a separate
+  // one from face enforcement — flagging rather than silently gating on it.
+  void isTwoFaValid
+  if (!isFaceValid()) return <Navigate to="/verify-face" replace />
 
   return (
     <div className="min-h-screen bg-gray-100 flex overscroll-none">

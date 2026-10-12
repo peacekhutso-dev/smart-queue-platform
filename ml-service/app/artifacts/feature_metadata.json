@@ -1,0 +1,32 @@
+{
+  "numeric_features": [
+    "hour",
+    "minute_of_day",
+    "day_of_week",
+    "is_weekend",
+    "patients_in_system",
+    "arrivals_last_60min"
+  ],
+  "categorical_features": [
+    "Doctor Type",
+    "Financial Class"
+  ],
+  "feature_order": [
+    "hour",
+    "minute_of_day",
+    "day_of_week",
+    "is_weekend",
+    "patients_in_system",
+    "arrivals_last_60min",
+    "Doctor Type",
+    "Financial Class"
+  ],
+  "target": "wait_min",
+  "target_unit": "minutes",
+  "best_model": "RandomForest",
+  "test_mae_minutes": 21.94,
+  "test_rmse_minutes": 35.63,
+  "test_r2": 0.0495,
+  "cv_mae_minutes": 16.71,
+  "notes": "hour/minute_of_day/day_of_week/is_weekend are computed server-side from the current timestamp when a citizen joins the queue. patients_in_system and arrivals_last_60min are live queue-load figures queue-service must supply at call time (they aren't derivable from a clock). Doctor Type/Financial Class are one-hot encoded inside the pipeline itself, with unknown categories at inference handled by OneHotEncoder(handle_unknown='ignore')."
+}

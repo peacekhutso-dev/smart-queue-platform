@@ -1,6 +1,7 @@
 package com.dha.feedback.service;
 
 import com.dha.feedback.client.BranchClient;
+import com.dha.feedback.client.QueueClient;
 import com.dha.feedback.dto.request.FeedbackRequest;
 import com.dha.feedback.entity.Feedback;
 import com.dha.feedback.repository.FeedbackRepository;
@@ -16,10 +17,16 @@ public class FeedbackService {
 
     private final FeedbackRepository feedbackRepository;
     private final BranchClient branchClient;
+    private final QueueClient queueClient;
 
     @Transactional
-    public void submitFeedback(FeedbackRequest request, UUID userId) {
+    public void submitFeedback(FeedbackRequest request, UUID userId, String userRole) {
         var branch = branchClient.getBranch(request.getBranchId());
+
+        Long entryBranchId = queueClient.getEntryBranchId(request.getQueueEntryId(), userId, userRole);
+        if (!entryBranchId.equals(branch.id())) {
+            throw new SecurityException("Queue entry does not belong to the specified branch");
+        }
 
         Feedback feedback = Feedback.builder()
                 .userId(userId)

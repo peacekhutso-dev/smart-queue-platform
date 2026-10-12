@@ -79,7 +79,7 @@ export default function OtpVerifyPage() {
       set2faVerified()
       toast.success('Phone verified!')
       if (sessionMode) {
-        navigate('/verify-face?mode=verify', { replace: true })
+        navigate('/verify-face', { replace: true })
       } else {
         navigate('/verify-id')
       }

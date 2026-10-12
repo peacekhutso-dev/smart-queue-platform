@@ -1,5 +1,6 @@
 package com.dha.document.client;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -24,13 +25,17 @@ import java.util.Map;
  * document optimization).
  */
 @Component
+@RequiredArgsConstructor
 @Slf4j
 public class MlServiceClient {
 
     @Value("${app.ml-service.url:http://localhost:8001}")
     private String mlServiceUrl;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    @Value("${app.gateway.shared-secret}")
+    private String gatewaySharedSecret;
+
+    private final RestTemplate restTemplate;
 
     public record QualityResult(int score, boolean passed, List<String> issues) {
     }
@@ -54,6 +59,7 @@ public class MlServiceClient {
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+            headers.set("X-Gateway-Secret", gatewaySharedSecret);
 
             Map<String, Object> response = restTemplate.postForObject(
                     mlServiceUrl + "/quality/assess",
@@ -93,6 +99,7 @@ public class MlServiceClient {
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+            headers.set("X-Gateway-Secret", gatewaySharedSecret);
 
             Map<String, Object> response = restTemplate.postForObject(
                     mlServiceUrl + "/classify/document",

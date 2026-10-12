@@ -25,6 +25,12 @@ spring:
     username: ${RABBITMQ_USER:guest}
     password: ${RABBITMQ_PASS:guest}
 
+app:
+  frontend:
+    url: ${FRONTEND_URL:http://localhost:5173}
+  gateway:
+    shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
+
 management:
   endpoints:
     web:

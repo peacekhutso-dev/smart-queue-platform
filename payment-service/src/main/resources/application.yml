@@ -26,6 +26,10 @@ spring:
     password: ${RABBITMQ_PASS:guest}
 
 app:
+  frontend:
+    url: ${FRONTEND_URL:http://localhost:5173}
+  gateway:
+    shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
   mock-provider:
     checkout-base-url: ${MOCK_CHECKOUT_BASE_URL:http://localhost:5173/mock-checkout}
     webhook-secret: ${MOCK_WEBHOOK_SECRET:mock-webhook-secret}

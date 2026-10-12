@@ -44,8 +44,22 @@ public class QueueController {
         return ResponseEntity.ok(ApiResponse.ok("Ticket cancelled", null));
     }
 
+    // Service-to-service lookup (see feedback-service's QueueClient) — the
+    // caller forwards the requesting citizen's own identity, so this is just
+    // an ownership-checked read, not an open-to-anyone lookup by id.
+    @GetMapping("/entries/{entryId}")
+    public ResponseEntity<ApiResponse<QueueEntryResponse>> getEntry(
+            @PathVariable Long entryId,
+            @AuthenticationPrincipal JwtPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                queueService.getEntryForRequester(entryId, principal.userId(), principal.role())));
+    }
+
     @GetMapping("/branch/{branchId}")
-    public ResponseEntity<ApiResponse<List<QueueEntryResponse>>> getBranchQueue(@PathVariable Long branchId) {
+    public ResponseEntity<ApiResponse<List<QueueEntryResponse>>> getBranchQueue(
+            @PathVariable Long branchId,
+            @AuthenticationPrincipal JwtPrincipal principal) {
+        requireStaff(principal);
         return ResponseEntity.ok(ApiResponse.ok(queueService.getBranchQueue(branchId)));
     }
 

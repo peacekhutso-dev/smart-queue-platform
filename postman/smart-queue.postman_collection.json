@@ -1,0 +1,258 @@
+{
+  "info": {
+    "name": "Smart Queue Platform — Zero Trust Auth Flow",
+    "description": "Login -> 2FA -> face verify -> protected routes, against api-gateway on localhost:8080. Import the local.postman_environment.json alongside this and select it top-right before running.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Register (sets dha_token cookie, Gate 1)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Fresh unique email every run so re-running Register doesn't 409.",
+              "pm.environment.set('email', 'test-' + Date.now() + '@example.com');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Register succeeded', () => pm.response.to.have.status(200));",
+              "pm.test('Response reports success:true', () => pm.expect(pm.response.json().success).to.be.true);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\",\n  \"email\": \"{{email}}\",\n  \"phoneNumber\": \"0821234567\",\n  \"password\": \"Password123\",\n  \"province\": \"Western Cape\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "register"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "1b. Login (use instead of Register on later runs)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Login succeeded', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"identifier\": \"{{email}}\",\n  \"password\": \"Password123\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "login"]
+        },
+        "description": "{{email}} carries over from whatever Register last set in this environment."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Send OTP",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('OTP send succeeded', () => pm.expect(body.success).to.be.true);",
+              "pm.environment.set('otp', body.data);",
+              "console.log('OTP received:', body.data);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"identifier\": \"{{email}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/send-otp",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "send-otp"]
+        },
+        "description": "Dev mode (OTP_DEV_EXPOSE=true) returns the OTP directly in `data` — captured into {{otp}} by the test script."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Verify OTP (grants 2FA gate)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('OTP verified', () => pm.expect(pm.response.json().data).to.be.true);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"identifier\": \"{{email}}\",\n  \"otp\": \"{{otp}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/verify-otp",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "verify-otp"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "4. Verify SA ID",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"saIdNumber\": \"9202204720082\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/verify-id",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "verify-id"]
+        },
+        "description": "Sample number is Luhn-valid for testing. Swap for a real test ID if needed."
+      },
+      "response": []
+    },
+    {
+      "name": "4b. Upload ID document (needed before Face Verify can actually match)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "documentType", "value": "SA_SMART_ID", "type": "text" },
+            { "key": "file", "type": "file", "src": [] }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/documents/upload",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "documents", "upload"]
+        },
+        "description": "In Postman, click the 'file' row's Select Files button and pick a real ID/face photo from disk — collection JSON can't carry a file path for you. document-service runs it through ml-service's classification/quality checks; if it's accepted, its photo becomes what Face Verify (step 5) compares your live scan against."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Face Verify (grants face gate)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"imageBase64\": \"PASTE_BASE64_IMAGE_HERE\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/face/verify",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "face", "verify"]
+        },
+        "description": "On Mac, generate the base64 with: base64 -i photo.jpg | pbcopy, then paste over the placeholder.\n\nverification-service currently checks the live scan against a citizen's verified ID document photo on file in document-service. If none is uploaded/verified yet for this account, expect 400 with code NO_ID_DOCUMENT — that's correct, testable behavior, not a bug."
+      },
+      "response": []
+    },
+    {
+      "name": "6. Get current user (confirms all 3 gates open)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "me"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "7. List branches",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/branches",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "branches"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "8. Join queue",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"branchId\": 1,\n  \"serviceType\": \"ID_APPLICATION\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/queue/join",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "queue", "join"]
+        },
+        "description": "Use a real branchId from step 7's response if 1 doesn't exist in your seeded data."
+      },
+      "response": []
+    },
+    {
+      "name": "9. Logout",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/logout",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "auth", "logout"]
+        }
+      },
+      "response": []
+    }
+  ]
+}

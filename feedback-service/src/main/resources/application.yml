@@ -24,8 +24,12 @@ app:
   # BranchClient does — direct synchronous call, not through the Gateway.
   branch-service:
     url: ${BRANCH_SERVICE_URL:http://localhost:8087}
+  queue-service:
+    url: ${QUEUE_SERVICE_URL:http://localhost:8088}
   frontend:
     url: ${FRONTEND_URL:http://localhost:5173}
+  gateway:
+    shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
 
 management:
   endpoints:

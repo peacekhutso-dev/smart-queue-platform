@@ -1,17 +1,20 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/AuthStore'
 
+// The JWT lives in an httpOnly dha_token cookie now, not a header this code
+// attaches manually — withCredentials makes the browser send it (and lets
+// the server's Set-Cookie be honored) even when this request crosses origins
+// (the built app talking to the Gateway directly, not through Vite's proxy).
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
-  timeout: 15000,
-})
-
-// Attach JWT to every request
-api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().token
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
+  // Face verification (verification-service -> face-service, DeepFace CPU
+  // inference) genuinely takes 20-30s+ on this hardware — 15s was aborting
+  // the request client-side on calls that were actually about to succeed
+  // (see api-gateway's response-timeout and verification-service's
+  // RestTemplateConfig, bumped for the same reason).
+  timeout: 60000,
+  withCredentials: true,
 })
 
 // Handle Zero Trust gate rejections + standard auth errors
@@ -29,8 +32,10 @@ api.interceptors.response.use(
     }
 
     if (status === 403) {
-      if (code === 'REQUIRES_2FA') {
-        // 2FA session expired — log out so user re-authenticates cleanly
+      if (code === 'REQUIRES_2FA' || code === 'REQUIRES_IDENTITY_CONFIRMATION') {
+        // 2FA / Home-Affairs identity-confirmation session expired — log out
+        // so the user re-authenticates cleanly (LoginPage's flow is what
+        // re-grants both).
         useAuthStore.getState().logout()
         window.location.href = '/login?reason=session_expired'
         return Promise.reject(error)

@@ -1,6 +1,5 @@
 import { Client } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
-import { useAuthStore } from '@/store/AuthStore'
 
 let stompClient: Client | null = null
 
@@ -9,12 +8,17 @@ export const connectWebSocket = (
   branchId: string,
   userId: string
 ) => {
-  const token = useAuthStore.getState().token
-
+  // No more manually reading a token to set as a STOMP CONNECT header — the
+  // JWT lives in an httpOnly dha_token cookie now, which the browser attaches
+  // automatically to the SockJS handshake request. queue-service establishes
+  // identity from that cookie during the handshake itself (see
+  // HandshakeAuthInterceptor) rather than from this connection's STOMP frames.
   stompClient = new Client({
-    // SockJS fallback for browsers that don't support raw WS
+    // SockJS fallback for browsers that don't support raw WS. Native
+    // WebSocket (SockJS's preferred transport in any modern browser) always
+    // attaches cookies matching the target's domain automatically, same as
+    // a plain navigation — no separate credentials flag needed there.
     webSocketFactory: () => new SockJS('/ws'),
-    connectHeaders: { Authorization: `Bearer ${token}` },
     reconnectDelay: 5000,
 
     onConnect: () => {

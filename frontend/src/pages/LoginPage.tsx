@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, EyeOff, ArrowLeft, ArrowRight } from 'lucide-react'
+import { Eye, EyeOff, ArrowRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 import axios from '../api/Axios'
 import { useAuthStore } from '../store/AuthStore'
@@ -15,33 +15,32 @@ export default function LoginPage() {
     if (params.get('reason') === 'session_expired') toast.error('Session expired. Please log in again.')
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [step, setStep]     = useState(0)
-  const [dir, setDir]       = useState<'fwd' | 'bck'>('fwd')
-  const [animKey, setAnimKey] = useState(0)
+  // Identity confirmation (Zero Trust gate 1.5) only appears after a
+  // successful sign-in — it's a separate security step against the citizen's
+  // Home Affairs record, not part of the sign-in form itself.
+  const [confirmingIdentity, setConfirmingIdentity] = useState(false)
+
   const [identifier, setIdentifier] = useState(() => sessionStorage.getItem(ID_KEY) ?? '')
   const [password, setPassword]   = useState('')
   const [showPw, setShowPw]     = useState(false)
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
 
+  const [saIdNumber, setSaIdNumber] = useState('')
+
   useEffect(() => { sessionStorage.setItem(ID_KEY, identifier) }, [identifier])
 
-  const goNext = () => {
-    if (!identifier.trim()) { setError('Please enter your phone or email.'); return }
-    setError(''); setDir('fwd'); setAnimKey((k) => k + 1); setStep(1)
-  }
-
-  const goBack = () => {
-    setError(''); setDir('bck'); setAnimKey((k) => k + 1); setStep(0)
-  }
-
   const handleLogin = async () => {
+    if (!identifier.trim()) { setError('Please enter your phone or email.'); return }
     if (!password.trim()) { setError('Please enter your password.'); return }
+    setError('')
     setLoading(true)
     try {
       const res  = await axios.post('/auth/login', { identifier, password })
       const data = res.data.data
-      if (data?.token) {
+      // The JWT is set as an httpOnly cookie by the server now, not returned
+      // in the body — userId presence is what confirms a successful login.
+      if (data?.userId) {
         useAuthStore.getState().setAuth({
           id:         String(data.userId),
           name:       data.firstName && data.lastName ? `${data.firstName} ${data.lastName}` : 'Citizen',
@@ -51,9 +50,9 @@ export default function LoginPage() {
           verified:   data.isVerified  ?? false,
           province:   data.province    ?? '',
           createdAt:  new Date().toISOString(),
-        }, data.token)
+        })
         sessionStorage.removeItem(ID_KEY)
-        navigate('/applicant-type')
+        setConfirmingIdentity(true)
       }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })
@@ -65,26 +64,36 @@ export default function LoginPage() {
     }
   }
 
-  const animClass = animKey === 0
-    ? 'animate-slide-up'
-    : dir === 'fwd'
-      ? 'animate-slide-in-right'
-      : 'animate-slide-in-left'
+  // Confirm SA ID against the Home Affairs record (name is checked
+  // server-side against the account's own registered name)
+  const confirmIdentity = async () => {
+    if (!/^\d{13}$/.test(saIdNumber)) { setError('Please enter your 13-digit SA ID number.'); return }
+    setLoading(true)
+    try {
+      const res = await axios.post('/auth/confirm-identity', { saIdNumber })
+      const data = res.data.data
+      if (data?.valid) {
+        // Skip straight to face-verify if this device doesn't already have a
+        // live session for it — ProtectedLayout would bounce them there
+        // anyway, but routing directly avoids the flash of /welcome first.
+        navigate(useAuthStore.getState().isFaceValid() ? '/welcome' : '/verify-face?returnTo=/welcome')
+      } else {
+        setError(data?.message ?? 'Identity could not be confirmed. Please try again.')
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })
+        ?.response?.data?.message ?? 'Could not confirm identity. Please try again.'
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
     <div className="min-h-dvh md:min-h-0 flex flex-col bg-white overflow-x-hidden">
 
       {/* ── Hero top strip — white bg, green text ── */}
       <div className="bg-white px-6 pt-14 pb-6 border-b border-gray-100 relative">
-        {step === 1 && (
-          <button
-            onClick={goBack}
-            className="absolute top-12 left-5 w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 text-gray-700" />
-          </button>
-        )}
-
         {/* Logo — centered, large */}
         <div className="flex justify-center mb-6">
           <img
@@ -110,28 +119,61 @@ export default function LoginPage() {
 
       {/* ── Form section ── */}
       <div className="flex-1 flex flex-col bg-white">
-        <div key={animKey} className={`flex flex-col px-6 pt-7 pb-8 ${animClass}`}>
+        <div className="flex flex-col px-6 pt-7 pb-8">
 
-          {/* Step 0 — Identifier */}
-          {step === 0 && (
+          {!confirmingIdentity ? (
             <>
               <h1 className="text-2xl font-black text-gray-900 mb-1">Welcome back</h1>
               <p className="text-gray-400 text-sm mb-8">Sign in to manage your queue & services</p>
 
-              <div className="flex flex-col gap-3">
+              <form
+                className="flex flex-col gap-3"
+                onSubmit={(e) => { e.preventDefault(); handleLogin() }}
+              >
                 <input
                   autoFocus
                   placeholder="+27 82 000 0000 or email"
                   value={identifier}
                   onChange={(e) => { setIdentifier(e.target.value); setError('') }}
-                  onKeyDown={(e) => e.key === 'Enter' && goNext()}
                   className="input-field text-base"
                 />
+
+                <div className="relative">
+                  <input
+                    type={showPw ? 'text' : 'password'}
+                    placeholder="Your password"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError('') }}
+                    className="input-field text-base pr-12"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((v) => !v)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showPw ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
+                  </button>
+                </div>
+
+                <div className="text-right -mt-1">
+                  <Link to="/forgot-password" className="text-sm text-primary-500 font-semibold">
+                    Forgot password?
+                  </Link>
+                </div>
+
                 {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
-                <button onClick={goNext} className="btn-primary flex items-center justify-center gap-2">
-                  Continue <ArrowRight className="w-5 h-5" />
+
+                <button type="submit" disabled={loading} className="btn-primary flex items-center justify-center gap-2">
+                  {loading ? (
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                  ) : (
+                    <>Sign In <ArrowRight className="w-5 h-5" /></>
+                  )}
                 </button>
-              </div>
+              </form>
 
               <div className="flex items-center gap-3 mt-7">
                 <div className="flex-1 h-px bg-gray-100" />
@@ -155,50 +197,38 @@ export default function LoginPage() {
                 <Link to="/register" className="text-primary-500 font-bold">Create one</Link>
               </p>
             </>
-          )}
-
-          {/* Step 1 — Password */}
-          {step === 1 && (
+          ) : (
             <>
-              <h1 className="text-2xl font-black text-gray-900 mb-1">Enter your password</h1>
-              <p className="text-gray-400 text-sm mb-8">Almost there — keep it secure</p>
+              <h1 className="text-2xl font-black text-gray-900 mb-1">Confirm your identity</h1>
+              <p className="text-gray-400 text-sm mb-8">
+                Enter your SA ID number to confirm your identity against your Home Affairs record
+              </p>
 
-              <div className="flex flex-col gap-3">
-                <div className="relative">
-                  <input
-                    autoFocus
-                    type={showPw ? 'text' : 'password'}
-                    placeholder="Your password"
-                    value={password}
-                    onChange={(e) => { setPassword(e.target.value); setError('') }}
-                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                    className="input-field text-base pr-12"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPw((v) => !v)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    {showPw ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
-                  </button>
-                </div>
-                <div className="text-right -mt-1">
-                  <Link to="/forgot-password" className="text-sm text-primary-500 font-semibold">
-                    Forgot password?
-                  </Link>
-                </div>
+              <form
+                className="flex flex-col gap-3"
+                onSubmit={(e) => { e.preventDefault(); confirmIdentity() }}
+              >
+                <input
+                  autoFocus
+                  inputMode="numeric"
+                  maxLength={13}
+                  placeholder="13-digit SA ID number"
+                  value={saIdNumber}
+                  onChange={(e) => { setSaIdNumber(e.target.value.replace(/\D/g, '')); setError('') }}
+                  className="input-field text-base font-mono tracking-widest"
+                />
                 {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
-                <button onClick={handleLogin} disabled={loading} className="btn-primary flex items-center justify-center gap-2">
+                <button type="submit" disabled={loading} className="btn-primary flex items-center justify-center gap-2">
                   {loading ? (
                     <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                     </svg>
                   ) : (
-                    <>Sign In <ArrowRight className="w-5 h-5" /></>
+                    <>Confirm Identity <ArrowRight className="w-5 h-5" /></>
                   )}
                 </button>
-              </div>
+              </form>
             </>
           )}
         </div>

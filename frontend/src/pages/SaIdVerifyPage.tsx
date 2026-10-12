@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CreditCard, ShieldCheck, HelpCircle } from 'lucide-react'
+import axios from '../api/Axios'
 
 export default function SaIdVerifyPage() {
   const navigate = useNavigate()
@@ -27,22 +28,35 @@ export default function SaIdVerifyPage() {
     }
     setLoading(true)
     try {
-      // POST SA ID to backend for Luhn validation + DB storage
-      const token = localStorage.getItem('dha_token')
-      await fetch('http://localhost:8080/api/auth/verify-id', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ saIdNumber: idNumber }),
-      })
+      // POST SA ID to backend for Luhn validation + DB storage. Goes through
+      // the shared axios instance (relative /api path via nginx's same-origin
+      // proxy, withCredentials for the httpOnly cookie) like every other
+      // page — a hardcoded absolute http://localhost:8080 URL here previously
+      // bypassed that proxy and got blocked by the browser at the CORS
+      // preflight stage, since api-gateway has no CORS config of its own
+      // (it's only ever meant to be reached same-origin, through nginx).
+      await axios.post('/auth/verify-id', { saIdNumber: idNumber })
+      // Also grants the "identity confirmed" Zero Trust gate right away using
+      // the ID number just entered — otherwise a brand-new registration would
+      // sail through every step here only to get silently logged back out at
+      // the first FULL-tier page it hits, since that gate is normally granted
+      // by Login's own confirm-identity step, which a fresh registration
+      // never passes through. Best-effort: if it fails (e.g. name doesn't
+      // match Home Affairs' record), the gate stays ungranted and the citizen
+      // is correctly asked for it on next login instead — never a hard block
+      // here, same as verify-id above.
+      await axios.post('/auth/confirm-identity', { saIdNumber: idNumber })
     } catch {
-      // Continue even if the API call fails — backend validates later
+      // Continue even if either API call fails — backend validates later
     } finally {
       setLoading(false)
-      // After ID verify, proceed to face enrolment (Zero Trust Gate 3 setup)
-      navigate('/verify-face?mode=enroll')
+      // After ID verify, run the live face check (Zero Trust Gate 3 setup).
+      // There's no separate "enroll" step — DHA is simulated as already
+      // having your photo on file, and this scan verifies against it.
+      // Goes to /home — HomePage itself still redirects to /welcome first
+      // for a citizen who hasn't picked an applicant type yet, so this isn't
+      // a way to skip that step, just the default landing spot afterward.
+      navigate('/verify-face?returnTo=/home')
     }
   }
 

@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -14,6 +15,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.UUID;
 
@@ -24,15 +27,16 @@ import java.util.UUID;
  * X-User-Id/X-User-Email/X-User-Role headers the Gateway sets after
  * verifying the caller — no crypto, no JWKS fetch, no DB call.
  *
- * Security note: this only holds if the Gateway is the *only* reachable
- * ingress. The docker-compose "direct debug" port on this service (8081)
- * bypasses the Gateway entirely and, on that path, these headers are
- * whatever the caller sends — fine for local dev, must not be exposed like
- * that in a real deployment.
+ * X-Gateway-Secret must also match app.gateway.shared-secret, so a caller
+ * reaching this service directly (bypassing the Gateway) can't just set the
+ * identity headers themselves — only the Gateway knows the shared secret.
  */
 @Component
 @Slf4j
 public class HeaderAuthFilter extends OncePerRequestFilter {
+
+    @Value("${app.gateway.shared-secret}")
+    private String gatewaySharedSecret;
 
     @Override
     protected void doFilterInternal(
@@ -44,8 +48,14 @@ public class HeaderAuthFilter extends OncePerRequestFilter {
         String userIdHeader = request.getHeader("X-User-Id");
         String email = request.getHeader("X-User-Email");
         String role = request.getHeader("X-User-Role");
+        String gatewaySecretHeader = request.getHeader("X-Gateway-Secret");
 
-        if (userIdHeader != null && role != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+        boolean secretValid = gatewaySecretHeader != null && MessageDigest.isEqual(
+                gatewaySecretHeader.getBytes(StandardCharsets.UTF_8),
+                gatewaySharedSecret.getBytes(StandardCharsets.UTF_8)
+        );
+
+        if (userIdHeader != null && role != null && secretValid && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
                 UUID userId = UUID.fromString(userIdHeader);
                 JwtPrincipal principal = new JwtPrincipal(userId, email, role);

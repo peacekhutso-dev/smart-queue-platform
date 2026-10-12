@@ -13,6 +13,8 @@ public class QueueEntryResponse {
     private Integer estimatedWaitMinutes;
     private String counterNumber;
     private String qrCode;
+    // data: URI PNG rendered from qrCode — see QrCodeService.
+    private String qrCodeImage;
     private Long branchId;
     private String branchName;
     private String branchAddress;

@@ -21,17 +21,20 @@ public class GlobalExceptionHandler {
         String errors = ex.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining(", "));
+        log.warn("Validation failed: {}", errors);
         return ResponseEntity.badRequest().body(ApiResponse.error("Validation failed: " + errors));
     }
 
     /** X-User-Id missing means the Gateway never verified this caller. */
     @ExceptionHandler(MissingRequestHeaderException.class)
     public ResponseEntity<ApiResponse<Object>> handleMissingHeader(MissingRequestHeaderException ex) {
+        log.warn("Rejected (401): missing {}", ex.getHeaderName());
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.error("Authentication required"));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Object>> handleIllegalArg(IllegalArgumentException ex) {
+        log.warn("Rejected (400): {}", ex.getMessage());
         return ResponseEntity.badRequest().body(ApiResponse.error(ex.getMessage()));
     }
 

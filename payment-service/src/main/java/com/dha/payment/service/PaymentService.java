@@ -34,18 +34,19 @@ public class PaymentService {
     private final ObjectMapper objectMapper;
 
     @Transactional
-    public CheckoutResult createIntent(CreatePaymentIntentRequest request) {
-        if (request.idempotencyKey() != null) {
-            var existing = paymentRepository.findByIdempotencyKey(request.idempotencyKey());
-            if (existing.isPresent()) {
-                Payment payment = existing.get();
-                CheckoutSession session = providerGateway.createCheckoutSession(payment);
-                return new CheckoutResult(payment, session.redirectUrl());
+    public CheckoutResult createIntent(UUID userId, CreatePaymentIntentRequest request) {
+        var existing = paymentRepository.findByIdempotencyKey(request.idempotencyKey());
+        if (existing.isPresent()) {
+            Payment payment = existing.get();
+            if (!payment.getUserId().equals(userId)) {
+                throw new SecurityException("Idempotency key belongs to a different user");
             }
+            CheckoutSession session = providerGateway.createCheckoutSession(payment);
+            return new CheckoutResult(payment, session.redirectUrl());
         }
 
         Payment payment = Payment.builder()
-                .userId(request.userId())
+                .userId(userId)
                 .queueEntryId(request.queueEntryId())
                 .amount(request.amount())
                 .currency(request.currency().toUpperCase())
@@ -66,9 +67,16 @@ public class PaymentService {
         return new CheckoutResult(payment, session.redirectUrl());
     }
 
-    public Payment getPayment(UUID id) {
-        return paymentRepository.findById(id)
+    public Payment getPayment(UUID id, UUID requesterId, String requesterRole) {
+        Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Payment not found: " + id));
+
+        boolean isOwner = payment.getUserId().equals(requesterId);
+        boolean isStaff = "STAFF".equals(requesterRole) || "ADMIN".equals(requesterRole);
+        if (!isOwner && !isStaff) {
+            throw new SecurityException("You do not have access to this payment");
+        }
+        return payment;
     }
 
     /**

@@ -4,10 +4,12 @@ import com.dha.payment.dto.request.CreatePaymentIntentRequest;
 import com.dha.payment.dto.response.ApiResponse;
 import com.dha.payment.dto.response.PaymentResponse;
 import com.dha.payment.entity.Payment;
+import com.dha.payment.security.JwtPrincipal;
 import com.dha.payment.service.PaymentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -21,14 +23,17 @@ public class PaymentController {
 
     @PostMapping("/intents")
     public ResponseEntity<ApiResponse<PaymentResponse>> createIntent(
+            @AuthenticationPrincipal JwtPrincipal principal,
             @Valid @RequestBody CreatePaymentIntentRequest request) {
-        var result = paymentService.createIntent(request);
+        var result = paymentService.createIntent(principal.userId(), request);
         return ResponseEntity.ok(ApiResponse.ok(PaymentResponse.of(result.payment(), result.redirectUrl())));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<PaymentResponse>> getPayment(@PathVariable UUID id) {
-        Payment payment = paymentService.getPayment(id);
+    public ResponseEntity<ApiResponse<PaymentResponse>> getPayment(
+            @AuthenticationPrincipal JwtPrincipal principal,
+            @PathVariable UUID id) {
+        Payment payment = paymentService.getPayment(id, principal.userId(), principal.role());
         return ResponseEntity.ok(ApiResponse.ok(PaymentResponse.of(payment)));
     }
 

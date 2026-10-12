@@ -1,0 +1,113 @@
+### Smart Queue Platform — Zero Trust auth flow
+###
+### Run requests top to bottom with the green ▶ gutter icon. Select the
+### "local" environment (dropdown, top-right of the editor) first — it sets
+### {{baseUrl}} from http-client.env.json.
+###
+### Cookies (the httpOnly dha_token JWT) and the OTP/global variables below
+### persist automatically across requests in this file for a given
+### environment — that's what lets step 2 use the cookie from step 1, etc.
+### No manual header wiring needed; api-gateway's ZeroTrustGlobalFilter
+### injects X-User-Id/X-User-Email downstream itself once the JWT gate passes.
+
+### 1. Register (also logs you in — sets dha_token cookie, Gate 1 passed)
+# Re-running this block fails with "email taken" on a second run — switch to
+# the Login block below instead once you've registered once.
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "firstName": "Test",
+  "lastName": "User",
+  "email": "test-{{$uuid}}@example.com",
+  "phoneNumber": "0821234567",
+  "password": "Password123",
+  "province": "Western Cape"
+}
+
+> {%
+    client.global.set("email", request.body.getField("email"));
+    client.test("Register succeeded", () => {
+        client.assert(response.status === 200, "Expected 200, got " + response.status);
+    });
+%}
+
+### 1b. Login instead (use this after the first successful register)
+# POST {{baseUrl}}/api/auth/login
+# Content-Type: application/json
+#
+# {
+#   "identifier": "{{email}}",
+#   "password": "Password123"
+# }
+
+### 2. Send OTP (dev mode returns the code directly in `data`)
+POST {{baseUrl}}/api/auth/send-otp
+Content-Type: application/json
+
+{
+  "identifier": "{{email}}"
+}
+
+> {%
+    client.global.set("otp", response.body.data);
+    client.log("OTP received: " + response.body.data);
+%}
+
+### 3. Verify OTP → grants the 2FA gate (Redis 2fa:{userId}, 8h TTL)
+POST {{baseUrl}}/api/auth/verify-otp
+Content-Type: application/json
+
+{
+  "identifier": "{{email}}",
+  "otp": "{{otp}}"
+}
+
+> {%
+    client.test("OTP verified", () => {
+        client.assert(response.body.data === true, "OTP verification returned false");
+    });
+%}
+
+### 4. Verify SA ID number (Luhn-checked, 13 digits)
+# This sample number is Luhn-valid for testing; swap for a real test ID if needed.
+POST {{baseUrl}}/api/auth/verify-id
+Content-Type: application/json
+
+{
+  "saIdNumber": "9202204720082"
+}
+
+### 5. Face verify → grants the face gate (Redis face:{userId}, 4h TTL)
+# Needs a base64-encoded JPEG/PNG. On Mac:
+#   base64 -i photo.jpg | pbcopy
+# then paste over PASTE_BASE64_IMAGE_HERE below.
+# NOTE (per verification-service's current design): this compares against a
+# citizen's verified ID document photo on file in document-service — if you
+# haven't uploaded/verified an ID document for this account yet, expect a
+# 400 with code "NO_ID_DOCUMENT" rather than a match, and that's correct
+# behavior to test for too.
+POST {{baseUrl}}/api/auth/face/verify
+Content-Type: application/json
+
+{
+  "imageBase64": "PASTE_BASE64_IMAGE_HERE"
+}
+
+### 6. Confirm all three gates are open — call a Gate-3 (fully protected) route
+GET {{baseUrl}}/api/auth/me
+
+### 7. Exercise a real protected business endpoint: list branches
+GET {{baseUrl}}/api/branches
+
+### 8. Join a queue (needs a real branchId from step 7's response)
+POST {{baseUrl}}/api/queue/join
+Content-Type: application/json
+
+{
+  "branchId": 1,
+  "serviceType": "ID_APPLICATION"
+}
+
+### 9. Logout (clears dha_token cookie)
+POST {{baseUrl}}/api/auth/logout

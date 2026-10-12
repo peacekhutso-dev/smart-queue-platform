@@ -40,7 +40,7 @@ export default function HomePage() {
   }, [loadCatalog])
 
   useEffect(() => {
-    if (loaded && !selectedApplicantType) navigate('/applicant-type', { replace: true })
+    if (loaded && !selectedApplicantType) navigate('/welcome', { replace: true })
   }, [loaded, selectedApplicantType, navigate])
 
   const [selected, setSelected]       = useState<string | null>(null)
