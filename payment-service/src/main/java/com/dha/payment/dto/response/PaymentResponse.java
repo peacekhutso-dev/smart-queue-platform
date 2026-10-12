@@ -9,7 +9,7 @@ import java.util.UUID;
 
 public record PaymentResponse(
         UUID id,
-        Long userId,
+        UUID userId,
         Long queueEntryId,
         BigDecimal amount,
         String currency,

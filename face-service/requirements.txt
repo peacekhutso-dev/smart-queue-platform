@@ -1,7 +1,13 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 deepface==0.0.93
-redis==5.0.8
 Pillow==10.4.0
 numpy==1.26.4
 tf-keras==2.16.0
+
+# Liveness check (liveness_service.py, vendored model in liveness/ — see
+# liveness/NOTICE.md). CPU-only wheel via PyTorch's own index — the default
+# PyPI `torch` build otherwise bundles CUDA and is several GB larger for no
+# benefit on this service's plain CPU inference.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0

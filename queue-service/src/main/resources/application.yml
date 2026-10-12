@@ -32,8 +32,28 @@ app:
   # change constantly (see BranchClient / RabbitMQConfig).
   branch-service:
     url: ${BRANCH_SERVICE_URL:http://localhost:8087}
+  identity-service:
+    url: ${IDENTITY_SERVICE_URL:http://localhost:8085}
+  # Required-documents check on joinQueue — see CatalogClient/DocumentClient.
+  catalog-service:
+    url: ${CATALOG_SERVICE_URL:http://localhost:8091}
+  queue:
+    # Dev-only: the required-documents gate on joinQueue depends on a
+    # document-type-extraction model that isn't built yet, so it currently
+    # blocks every booking that needs documents. Skips requireDocumentsOnFile
+    # entirely while that's in progress, so citizens can still reach upload +
+    # booking; verification happens manually at the branch instead (see
+    # "Documents are pre-validated. Final approval at the branch." copy on
+    # the frontend). Never true in a real deployment.
+    skip-document-check: ${QUEUE_SKIP_DOCUMENT_CHECK:false}
+  document-service:
+    url: ${DOCUMENT_SERVICE_URL:http://localhost:8089}
+  ml-service:
+    url: ${ML_SERVICE_URL:http://localhost:8001}
   frontend:
     url: ${FRONTEND_URL:http://localhost:5173}
+  gateway:
+    shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
 
 management:
   endpoints:

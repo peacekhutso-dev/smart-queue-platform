@@ -20,21 +20,25 @@ public class GlobalExceptionHandler {
         String errors = ex.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining(", "));
+        log.warn("Validation failed: {}", errors);
         return ResponseEntity.badRequest().body(ApiResponse.error("Validation failed: " + errors));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Object>> handleIllegalArg(IllegalArgumentException ex) {
+        log.warn("Rejected (400): {}", ex.getMessage());
         return ResponseEntity.badRequest().body(ApiResponse.error(ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<ApiResponse<Object>> handleIllegalState(IllegalStateException ex) {
+        log.warn("Rejected (409): {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(ex.getMessage()));
     }
 
     @ExceptionHandler(SecurityException.class)
     public ResponseEntity<ApiResponse<Object>> handleSecurity(SecurityException ex) {
+        log.warn("Rejected (403): {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(ex.getMessage()));
     }
 

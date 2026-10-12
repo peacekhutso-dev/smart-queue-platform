@@ -12,11 +12,16 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Handles face enrollment (first-time) and verification (session renewal).
- * The Gateway's ZeroTrustGlobalFilter already required a valid JWT to reach
- * here (GATE1_ONLY tier — this endpoint is what *grants* the face gate, so
- * it can't itself require the face gate) and forwards the caller's identity
- * as X-User-Id — no JWT parsing needed in this service at all.
+ * Verifies a live selfie against a citizen's DHA record photo — the face
+ * photo from their verified SA ID/passport document, fetched fresh from
+ * document-service on every call (see FaceVerificationService). There is no
+ * enrollment endpoint: a citizen with no verified ID document on file has
+ * nothing to verify against, so that request is rejected rather than ever
+ * treated as a pass. The Gateway's ZeroTrustGlobalFilter already required a
+ * valid JWT to reach here (GATE1_ONLY tier — this endpoint is what *grants*
+ * the face gate, so it can't itself require the face gate) and forwards the
+ * caller's identity as X-User-Id — no JWT parsing needed in this service
+ * at all.
  */
 @RestController
 @RequestMapping("/api/auth/face")
@@ -24,27 +29,6 @@ import java.util.UUID;
 public class FaceVerificationController {
 
     private final FaceVerificationService faceService;
-
-    @PostMapping("/enroll")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> enroll(
-            @Valid @RequestBody FaceVerifyRequest request,
-            @RequestHeader("X-User-Id") UUID userId) {
-
-        FaceVerificationService.EnrollResult result = faceService.enrollFace(userId, request.getImageBase64());
-
-        if (result.success()) {
-            return ResponseEntity.ok(ApiResponse.ok("Face enrolled successfully",
-                    Map.of("enrolled", true, "userId", userId)));
-        }
-        if (result.livenessFailed()) {
-            return ResponseEntity.badRequest().body(ApiResponse.<Map<String, Object>>builder()
-                    .success(false)
-                    .message(result.message())
-                    .data(Map.of("code", "LIVENESS_FAILED"))
-                    .build());
-        }
-        return ResponseEntity.badRequest().body(ApiResponse.error(result.message()));
-    }
 
     @PostMapping("/verify")
     public ResponseEntity<?> verify(
@@ -61,21 +45,30 @@ public class FaceVerificationController {
                     .build());
         }
 
-        if (result.noEnrollment()) {
+        if (result.noDocumentOnFile()) {
             return ResponseEntity.badRequest().body(ApiResponse.<Map<String, Object>>builder()
                     .success(false)
-                    .message("No face enrolled. Please complete face enrollment first.")
-                    .data(Map.of("code", "NO_ENROLLMENT"))
+                    .message(result.message())
+                    .data(Map.of("code", "NO_ID_DOCUMENT"))
                     .build());
         }
 
         if (result.verified()) {
-            return ResponseEntity.ok(ApiResponse.ok("Face verified",
+            return ResponseEntity.ok(ApiResponse.ok("Identity verified against DHA record",
                     Map.of("verified", true, "userId", userId)));
         }
 
-        return ResponseEntity.status(401).body(ApiResponse.error(
-                result.message().isBlank() ? "Face does not match. Please try again." : result.message()
-        ));
+        // 400, not 401 — a mismatched face is a retry-able outcome, not an
+        // invalid/expired JWT. The frontend's Axios interceptor treats any
+        // 401 as "session invalid" and force-logs-out + hard-redirects to
+        // /login globally — a 401 here previously meant a normal failed
+        // face match (this endpoint's JWT was fine, gate1 already passed
+        // to even reach it) kicked the user all the way back to login
+        // instead of reaching FaceVerifyPage/FaceScanModal's own retry UI.
+        return ResponseEntity.badRequest().body(ApiResponse.<Map<String, Object>>builder()
+                .success(false)
+                .message(result.message().isBlank() ? "Face does not match. Please try again." : result.message())
+                .data(Map.of("code", "FACE_MISMATCH"))
+                .build());
     }
 }

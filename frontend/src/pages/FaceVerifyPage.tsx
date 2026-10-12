@@ -6,12 +6,14 @@ import api from '../api/Axios'
 import { useAuthStore } from '../store/AuthStore'
 
 type Phase = 'idle' | 'starting' | 'streaming' | 'capturing' | 'processing' | 'success' | 'error'
-type Mode  = 'enroll' | 'verify'
 
+// There is no citizen-facing "enroll" step — DHA is simulated as already
+// having the citizen's photo on file. Every visit here is a live
+// verification against that DHA record (see verification-service /
+// face-service for how the record gets established behind the scenes).
 export default function FaceVerifyPage() {
   const navigate       = useNavigate()
   const [params]       = useSearchParams()
-  const mode: Mode     = (params.get('mode') as Mode) ?? 'enroll'
   const returnTo       = params.get('returnTo') ?? '/home'
 
   const { setFaceVerified } = useAuthStore()
@@ -75,33 +77,19 @@ export default function FaceVerifyPage() {
     setMessage('')
 
     try {
-      const endpoint = mode === 'enroll' ? '/auth/face/enroll' : '/auth/face/verify'
-      await api.post(endpoint, { imageBase64 })
+      await api.post('/auth/face/verify', { imageBase64 })
 
       setPhase('success')
       stopCamera()
-
-      if (mode === 'verify') {
-        setFaceVerified()
-        toast.success('Face verified — access granted')
-        setTimeout(() => navigate(returnTo, { replace: true }), 800)
-      } else {
-        toast.success('Face enrolled successfully!')
-        setTimeout(() => navigate('/applicant-type', { replace: true }), 800)
-      }
+      setFaceVerified()
+      toast.success('Face verification successful')
+      setTimeout(() => navigate(returnTo, { replace: true }), 800)
     } catch (err: unknown) {
-      const errData = (err as { response?: { data?: { data?: { code?: string }; message?: string } } })?.response?.data
-      const code    = errData?.data?.code
+      const errData = (err as { response?: { data?: { message?: string } } })?.response?.data
       const msg     = errData?.message
 
-      if (code === 'NO_ENROLLMENT' && mode === 'verify') {
-        // Shouldn't happen here, but handle gracefully
-        navigate('/verify-face?mode=enroll', { replace: true })
-        return
-      }
-
       setPhase('error')
-      setMessage(msg ?? `Face ${mode === 'enroll' ? 'enrollment' : 'verification'} failed. Please try again.`)
+      setMessage(msg ?? 'Verification failed. Please try again.')
     }
   }
 
@@ -110,8 +98,6 @@ export default function FaceVerifyPage() {
     setMessage('')
     startCamera()
   }
-
-  const isEnroll = mode === 'enroll'
 
   return (
     <div className="min-h-screen bg-black flex flex-col">
@@ -192,13 +178,9 @@ export default function FaceVerifyPage() {
       {/* Bottom sheet */}
       <div className="bg-white rounded-t-3xl px-6 pt-6 pb-8 flex flex-col gap-4">
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900">
-            {isEnroll ? 'Enrol Your Face' : 'Verify Your Identity'}
-          </h2>
+          <h2 className="text-2xl font-bold text-gray-900">Verify Against DHA Record</h2>
           <p className="text-gray-500 text-sm mt-1">
-            {isEnroll
-              ? 'Position your face in the frame. This becomes your biometric reference.'
-              : 'Look directly at the camera to verify your identity.'}
+            Look directly at the camera — we'll compare it live against the photo already on file with Home Affairs.
           </p>
         </div>
 
@@ -224,23 +206,16 @@ export default function FaceVerifyPage() {
             className="w-full bg-green-500 text-white font-bold py-4 rounded-2xl hover:bg-green-600 transition-all active:scale-95 disabled:opacity-50"
           >
             {phase === 'processing' ? 'Processing…' :
-             phase === 'success'    ? isEnroll ? 'Enrolled ✓' : 'Verified ✓' :
+             phase === 'success'    ? 'Verified ✓' :
              phase === 'starting' || phase === 'idle' ? 'Starting camera…' :
-             isEnroll ? 'Enrol Face' : 'Verify Identity'}
+             'Verify Identity'}
           </button>
         )}
 
         <div className="border border-gray-100 rounded-2xl p-4 flex items-start gap-3">
           <Shield className="w-5 h-5 text-gray-400 flex-shrink-0" />
           <div>
-            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">
-              {isEnroll ? 'Biometric Enrolment' : 'Secure Verification'}
-            </p>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {isEnroll
-                ? 'Your face embedding is encrypted and stored securely. Never shared.'
-                : 'Zero Trust: every session requires a fresh face scan. Data stays on-device during capture.'}
-            </p>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Secure & Trusted Verification</p>
           </div>
         </div>
       </div>

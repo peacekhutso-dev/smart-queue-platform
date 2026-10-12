@@ -4,3 +4,15 @@ pydantic==2.7.1
 python-magic==0.4.27
 opencv-python-headless==4.13.0.92
 anthropic==0.116.0
+
+# wait-time model (app/routers/wait_time.py) + its offline training script
+# (scripts/train_wait_time.py, not shipped in the image). Pinned to exactly
+# what scripts/train_wait_time.py was actually run with when producing
+# app/artifacts/*.pkl — a version mismatch between training and serving
+# triggers scikit-learn's InconsistentVersionWarning on unpickle (or worse,
+# a real behavior change), so these three move together with the artifacts.
+numpy==2.0.2
+pandas==2.3.3
+scikit-learn==1.6.1
+joblib==1.5.3
+openpyxl==3.1.2

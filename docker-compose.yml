@@ -1,33 +1,101 @@
-version: '3.8'
+# SQMS — Smart Queue Management System (DHA)
+# Shared-server profile (csposrgradserver1, rootless Docker, 8 GB / 4 CPU cap
+# across all containers): every service has explicit CPU/memory limits,
+# bounded logs, bounded restarts, and only ONE host port is published — the
+# frontend nginx, which serves the SPA and proxies /api + /ws to api-gateway.
+# Bound to 127.0.0.1 by default; on the server set BIND_ADDR=0.0.0.0 and
+# FRONTEND_HOST_PORT (8090-8199) in .env. All secrets live in .env.
+# No fixed container names, so several instances can run side by side under
+# different project names (docker compose -p <group> ...).
+#
+# Memory ceiling for the whole stack: ~7.9 GB (sum of per-service limits).
+# Local dev extras (gateway on :8080 for Vite, MySQL on a host port):
+# docker-compose.dev.yml.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Shared by every app service.
+x-common-env: &common-env
+  GATEWAY_SHARED_SECRET: ${GATEWAY_SHARED_SECRET:?set GATEWAY_SHARED_SECRET in .env}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+# Spring Boot services: size the heap from the container limit instead of
+# host RAM, and use the low-overhead serial GC for small heaps. 60% leaves
+# room for metaspace/threads/code cache inside the container limit.
+x-jvm-env: &jvm-env
+  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+UseSerialGC"
 
 services:
+  # ───────────────────────── Infrastructure ─────────────────────────
+
   mysql:
     image: mysql:8.0
-    container_name: dha_mysql
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - --innodb-buffer-pool-size=256M
+      - --performance-schema=OFF
     environment:
       MYSQL_DATABASE: ${DB_NAME:-smart_queue}
       MYSQL_USER: ${DB_USER:-dha_user}
-      MYSQL_PASSWORD: ${DB_PASS:-dhapassword}
-      MYSQL_ROOT_PASSWORD: ${DB_PASS:-dhapassword}
-    ports:
-      - "3306:3306"
+      MYSQL_PASSWORD: ${DB_PASS:?set DB_PASS in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS:-${DB_PASS}}
+      # Read by init-service-dbs.sh to create the per-service users.
+      IDENTITY_DB_PASS: ${IDENTITY_DB_PASS:?set IDENTITY_DB_PASS in .env}
+      BRANCH_DB_PASS: ${BRANCH_DB_PASS:?set BRANCH_DB_PASS in .env}
+      QUEUE_DB_PASS: ${QUEUE_DB_PASS:?set QUEUE_DB_PASS in .env}
+      DOCUMENT_DB_PASS: ${DOCUMENT_DB_PASS:?set DOCUMENT_DB_PASS in .env}
+      FEEDBACK_DB_PASS: ${FEEDBACK_DB_PASS:?set FEEDBACK_DB_PASS in .env}
+      CATALOG_DB_PASS: ${CATALOG_DB_PASS:?set CATALOG_DB_PASS in .env}
+    # No host port. For a local DB GUI, use docker-compose.dev.yml.
     volumes:
       - mysql_data:/var/lib/mysql
-      # Creates the identity_db schema + scoped user alongside smart_queue on
-      # first init (schema-per-service, one shared instance — see plan).
-      - ./infra/mysql/init-identity-db.sql:/docker-entrypoint-initdb.d/init-identity-db.sql:ro
+      # Creates the per-service schemas + scoped users on first init
+      # (schema-per-service, one shared instance).
+      - ./infra/mysql/init-service-dbs.sh:/docker-entrypoint-initdb.d/init-service-dbs.sh:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
       timeout: 20s
       retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 640m }
+
+  # Payment gets its own isolated MySQL instance/credentials — tighter
+  # backup/audit/access policy for payment data.
+  payment-mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+    environment:
+      MYSQL_DATABASE: ${PAYMENT_DB_NAME:-payment_db}
+      MYSQL_USER: ${PAYMENT_DB_USER:-payment_user}
+      MYSQL_PASSWORD: ${PAYMENT_DB_PASS:?set PAYMENT_DB_PASS in .env}
+      MYSQL_ROOT_PASSWORD: ${PAYMENT_DB_ROOT_PASS:-${PAYMENT_DB_PASS}}
+    volumes:
+      - payment_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 20s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
   redis:
     image: redis:7-alpine
-    container_name: dha_redis
-    restart: always
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -35,14 +103,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 256m }
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    container_name: dha_rabbitmq
-    restart: always
-    ports:
-      - "5672:5672"   # AMQP
-      - "15672:15672" # management UI (guest/guest by default)
+    restart: unless-stopped
+    logging: *default-logging
+    # Management UI (15672) is deliberately not published.
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -50,254 +119,273 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.116.1
-    container_name: dha_otel_collector
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./infra/otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
-    ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128m }
 
-  # Payment gets its own isolated MySQL instance/credentials (not schema-per-
-  # service in the shared instance like everything else) — tighter backup/
-  # audit/access policy given it's payment data, per the migration plan.
-  payment-mysql:
-    image: mysql:8.0
-    container_name: dha_payment_mysql
-    restart: always
-    environment:
-      MYSQL_DATABASE: ${PAYMENT_DB_NAME:-payment_db}
-      MYSQL_USER: ${PAYMENT_DB_USER:-payment_user}
-      MYSQL_PASSWORD: ${PAYMENT_DB_PASS:-paymentpassword}
-      MYSQL_ROOT_PASSWORD: ${PAYMENT_DB_PASS:-paymentpassword}
-    ports:
-      - "3307:3306"
-    volumes:
-      - payment_mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      timeout: 20s
-      retries: 10
+  # ───────────────────────── Spring Boot services ─────────────────────────
 
   payment-service:
     build:
       context: ./payment-service
       dockerfile: Dockerfile
-    container_name: dha_payment_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       payment-mysql:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: [*common-env, *jvm-env]
       DB_HOST: payment-mysql
       DB_PORT: 3306
       DB_NAME: ${PAYMENT_DB_NAME:-payment_db}
       DB_USER: ${PAYMENT_DB_USER:-payment_user}
-      DB_PASS: ${PAYMENT_DB_PASS:-paymentpassword}
+      DB_PASS: ${PAYMENT_DB_PASS}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8083:8083"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
+  # WebSocket push to the browser, fed by RabbitMQ.
   notification-gateway:
     build:
       context: ./notification-gateway
       dockerfile: Dockerfile
-    container_name: dha_notification_gateway
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: [*common-env, *jvm-env]
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8084:8084"
+      IDENTITY_SERVICE_URL: http://identity-service:8085
+      FRONTEND_URL: ${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}}
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 384m }
 
   identity-service:
     build:
       context: ./identity-service
       dockerfile: Dockerfile
-    container_name: dha_identity_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
+      <<: [*common-env, *jvm-env]
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: identity_db
       DB_USER: identity_user
-      DB_PASS: identitypassword
+      DB_PASS: ${IDENTITY_DB_PASS}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      FRONTEND_URL: ${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}}
       JWT_EXPIRY: ${JWT_EXPIRY:-86400000}
+      # Frontend is reached over HTTP on localhost (via SSH tunnel), so the
+      # Secure cookie flag stays off. Never false on a real HTTPS deployment.
+      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-false}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-localhost}
-      WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:-http://localhost:5173,http://localhost:5175,http://localhost:8443,http://localhost:3000}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8085:8085"
+      # Citizen frontend + admin dashboard (Vite dev server, port 8443).
+      WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:-${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}},http://localhost:8443}
+      # Dev only — no SMS/email provider wired up yet.
+      OTP_DEV_EXPOSE: ${OTP_DEV_EXPOSE:-true}
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
   verification-service:
     build:
       context: ./verification-service
       dockerfile: Dockerfile
-    container_name: dha_verification_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       redis:
         condition: service_healthy
+      document-service:
+        condition: service_started
+      face-service:
+        condition: service_started
     environment:
+      <<: [*common-env, *jvm-env]
       REDIS_HOST: redis
       REDIS_PORT: 6379
       FACE_SERVICE_URL: http://face-service:8002
-      FACE_DEV_BYPASS: ${FACE_DEV_BYPASS:-true}
-      LUXAND_BASE_URL: ${LUXAND_BASE_URL:-https://api.luxand.cloud}
-      LUXAND_API_KEY: ${LUXAND_API_KEY:-}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8086:8086"
+      FACE_DEV_BYPASS: ${FACE_DEV_BYPASS:-false}
+      DOCUMENT_SERVICE_URL: http://document-service:8089
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
-  # Branch-service keeps live per-branch queue counts in a local cache fed by
-  # queue-service's queue.events (RabbitMQ) rather than polling for them —
-  # see QueueCountCache/QueueEventListener. The reverse direction is still a
-  # direct synchronous call: queue-service calls branch-service's public API
-  # for branch config (see queue-service's BranchClient), since that changes
-  # rarely and doesn't need an event-fed cache.
+  # Keeps live per-branch queue counts in a local cache fed by queue-service's
+  # queue.events (RabbitMQ); queue-service calls branch-service synchronously
+  # for branch config.
   branch-service:
     build:
       context: ./branch-service
       dockerfile: Dockerfile
-    container_name: dha_branch_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       mysql:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: [*common-env, *jvm-env]
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: branch_db
       DB_USER: branch_user
-      DB_PASS: branchpassword
+      DB_PASS: ${BRANCH_DB_PASS}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8087:8087"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
   queue-service:
     build:
       context: ./queue-service
       dockerfile: Dockerfile
-    container_name: dha_queue_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       mysql:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      catalog-service:
+        condition: service_started
+      document-service:
+        condition: service_started
+      ml-service:
+        condition: service_started
     environment:
+      <<: [*common-env, *jvm-env]
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: queue_db
       DB_USER: queue_user
-      DB_PASS: queuepassword
+      DB_PASS: ${QUEUE_DB_PASS}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       BRANCH_SERVICE_URL: http://branch-service:8087
-      FRONTEND_URL: http://localhost:5173
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8088:8088"
+      IDENTITY_SERVICE_URL: http://identity-service:8085
+      CATALOG_SERVICE_URL: http://catalog-service:8091
+      DOCUMENT_SERVICE_URL: http://document-service:8089
+      ML_SERVICE_URL: http://ml-service:8001
+      FRONTEND_URL: ${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}}
+      # Dev only — document-type-extraction model not built yet.
+      QUEUE_SKIP_DOCUMENT_CHECK: ${QUEUE_SKIP_DOCUMENT_CHECK:-true}
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
   document-service:
     build:
       context: ./document-service
       dockerfile: Dockerfile
-    container_name: dha_document_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       mysql:
         condition: service_healthy
       ml-service:
         condition: service_started
     environment:
+      <<: [*common-env, *jvm-env]
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: document_db
       DB_USER: document_user
-      DB_PASS: documentpassword
-      FRONTEND_URL: http://localhost:5173
+      DB_PASS: ${DOCUMENT_DB_PASS}
+      FRONTEND_URL: ${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}}
       ML_SERVICE_URL: http://ml-service:8001
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8089:8089"
+      # Dev only — skips the AI classification/quality gate on upload.
+      DOCUMENT_SKIP_ML_CHECK: ${DOCUMENT_SKIP_ML_CHECK:-true}
+    # Persists uploaded documents (and the seeded reference photo) across
+    # rebuilds/recreates.
+    volumes:
+      - document_uploads:/app/uploads
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
   feedback-service:
     build:
       context: ./feedback-service
       dockerfile: Dockerfile
-    container_name: dha_feedback_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       mysql:
         condition: service_healthy
     environment:
+      <<: [*common-env, *jvm-env]
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: feedback_db
       DB_USER: feedback_user
-      DB_PASS: feedbackpassword
+      DB_PASS: ${FEEDBACK_DB_PASS}
       BRANCH_SERVICE_URL: http://branch-service:8087
-      FRONTEND_URL: http://localhost:5173
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8090:8090"
+      QUEUE_SERVICE_URL: http://queue-service:8088
+      FRONTEND_URL: ${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}}
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
   catalog-service:
     build:
       context: ./catalog-service
       dockerfile: Dockerfile
-    container_name: dha_catalog_service
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       mysql:
         condition: service_healthy
     environment:
+      <<: [*common-env, *jvm-env]
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: catalog_db
       DB_USER: catalog_user
-      DB_PASS: catalogpassword
-      FRONTEND_URL: http://localhost:5173
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8091:8091"
+      DB_PASS: ${CATALOG_DB_PASS}
+      FRONTEND_URL: ${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}}
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
-  # Single front door for the frontend, and the one place that verifies JWTs
-  # and enforces the 2FA/face/fingerprint zero-trust gates
-  # (ZeroTrustGlobalFilter), forwarding trusted identity downstream via
-  # X-User-Id/X-User-Email/X-User-Role headers. The monolith is fully
-  # decommissioned — every domain now has its own route in
-  # api-gateway/src/main/resources/application.yml.
+  # Single front door: verifies JWTs, enforces the zero-trust gates
+  # (ZeroTrustGlobalFilter) and forwards identity downstream via
+  # X-User-Id / X-User-Email / X-User-Role headers.
   api-gateway:
     build:
       context: ./api-gateway
       dockerfile: Dockerfile
-    container_name: dha_api_gateway
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       - payment-service
       - notification-gateway
@@ -310,6 +398,7 @@ services:
       - catalog-service
       - redis
     environment:
+      <<: [*common-env, *jvm-env]
       PAYMENT_SERVICE_URL: http://payment-service:8083
       NOTIFICATION_GATEWAY_URL: ws://notification-gateway:8084
       IDENTITY_SERVICE_URL: http://identity-service:8085
@@ -321,47 +410,67 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:8091
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      ZERO_TRUST_BYPASS: ${ZERO_TRUST_BYPASS:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-    ports:
-      - "8080:8080"
+      ZERO_TRUST_BYPASS: ${ZERO_TRUST_BYPASS:-false}
+    # No host port: reached only through the frontend nginx (/api, /ws).
+    # docker-compose.dev.yml publishes :8080 for the local Vite dev servers.
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
+
+  # ───────────────────────── Python services ─────────────────────────
 
   ml-service:
     build:
       context: ./ml-service
       dockerfile: Dockerfile
-    container_name: dha_ml
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     environment:
+      <<: *common-env
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-    ports:
-      - "8001:8001"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m }
 
+  # Heaviest service: DeepFace (Facenet512) CPU inference + anti-spoofing.
+  # Thread counts pinned so TensorFlow doesn't spawn one thread per host core.
   face-service:
     build:
       context: ./face-service
       dockerfile: Dockerfile
-    container_name: dha_face
-    restart: always
-    ports:
-      - "8002:8002"
+    restart: on-failure:5
+    logging: *default-logging
+    environment:
+      <<: *common-env
+      OMP_NUM_THREADS: "2"
+      TF_NUM_INTRAOP_THREADS: "2"
+      TF_NUM_INTEROP_THREADS: "1"
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: 2g }
 
+  # ───────────────────────── Frontend ─────────────────────────
+
+  # nginx serves the built SPA and proxies /api and /ws to api-gateway on the
+  # compose network, so the browser only ever talks to this one origin.
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: dha_frontend
-    restart: always
+    restart: on-failure:5
+    logging: *default-logging
     depends_on:
       - api-gateway
     ports:
-      - "5173:80"
-    environment:
-      VITE_API_URL: http://localhost:8080
-      VITE_WS_URL: ws://localhost:8080
+      - "${BIND_ADDR:-127.0.0.1}:${FRONTEND_HOST_PORT:-5173}:80"
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m }
 
 volumes:
   mysql_data:
   redis_data:
   rabbitmq_data:
   payment_mysql_data:
+  document_uploads:

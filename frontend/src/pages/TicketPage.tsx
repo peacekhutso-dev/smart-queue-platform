@@ -1,35 +1,112 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, Share2, XCircle, MapPin } from 'lucide-react'
+import { Bell, Share2, XCircle, MapPin, Clock3 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useQueueStore } from '../store/QueueStore'
 import { useAuthStore } from '../store/AuthStore'
-import axios from '../api/Axios'
+import { queueApi } from '../api/Index'
 import ScreenHeader from '@/components/layout/ScreenHeader'
+import type { QueueEntry } from '../types'
+
+const STATUS_STYLE: Record<string, string> = {
+  WAITING:   'bg-blue-50 text-blue-600 border-blue-100',
+  CALLED:    'bg-amber-50 text-amber-600 border-amber-100',
+  SERVING:   'bg-blue-50 text-blue-600 border-blue-100',
+  COMPLETE:  'bg-green-50 text-green-600 border-green-100',
+  CANCELLED: 'bg-red-50 text-red-500 border-red-100',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  WAITING: 'Awaiting Documents',
+  CALLED: 'Called',
+  SERVING: 'In Progress',
+  COMPLETE: 'Complete',
+  CANCELLED: 'Cancelled',
+}
+
+function PastTickets({ entries }: { entries: QueueEntry[] }) {
+  if (entries.length === 0) return null
+  return (
+    <div className="bg-white border border-gray-200 rounded-2xl p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Clock3 className="w-4 h-4 text-gray-400" />
+        <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Past Tickets</span>
+      </div>
+      <div className="flex flex-col divide-y divide-gray-100">
+        {entries.map((e) => (
+          <div key={e.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-gray-900">{e.serviceType?.replace(/_/g, ' ')}</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {e.ticketNumber} · {e.branchName} · {new Date(e.joinedAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
+              </p>
+            </div>
+            <span className={`shrink-0 ml-3 text-xs font-bold border rounded-full px-2.5 py-1 ${STATUS_STYLE[e.status] ?? 'bg-gray-50 text-gray-500 border-gray-100'}`}>
+              {STATUS_LABEL[e.status] ?? e.status}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function TicketPage() {
   const navigate = useNavigate()
   // ✅ Fixed: activeTicket → myTicket
-  const ticket   = useQueueStore((s) => s.myTicket)
-  const user     = useAuthStore((s) => s.user)
+  const ticket      = useQueueStore((s) => s.myTicket)
+  const setMyTicket = useQueueStore((s) => s.setMyTicket)
+  const user        = useAuthStore((s) => s.user)
+  // myTicket only lives in memory, set by the booking flow's onBooked
+  // callback — a refresh or a direct visit to /ticket (e.g. from a nav
+  // link) starts with an empty store even though a ticket exists
+  // server-side, so it must be re-fetched here rather than assumed absent.
+  const [loading, setLoading] = useState(!ticket)
+  // /queue/history returns every past entry (including cancelled ones) with
+  // its status — previously fetched nowhere, so a cancelled ticket simply
+  // vanished with no record visible anywhere in the app.
+  const [history, setHistory] = useState<QueueEntry[]>([])
+
+  useEffect(() => {
+    if (!ticket) {
+      queueApi.myTicket()
+        .then((res) => setMyTicket(res.data.data ?? null))
+        .finally(() => setLoading(false))
+    }
+    queueApi.history().then((res) => setHistory(res.data.data ?? []))
+  }, [])
 
   // Redirect to live status when called
   useEffect(() => {
     if (ticket?.status === 'CALLED') navigate('/queue-status')
   }, [ticket?.status])
 
-  if (!ticket) {
+  if (loading) {
     return (
       <div className="flex flex-col min-h-screen bg-gray-50 overscroll-none">
         <ScreenHeader title="History" showSettings={false} />
         <div className="flex flex-col items-center justify-center gap-4 px-5 text-center flex-1">
-          <p className="text-gray-500">No active ticket. Join a queue first.</p>
-          <button
-            onClick={() => navigate('/branches')}
-            className="bg-green-500 text-white font-bold rounded-2xl py-3 px-8 hover:bg-green-600"
-          >
-            Find a Branch
-          </button>
+          <div className="skeleton w-40 h-8 rounded-xl" />
+        </div>
+      </div>
+    )
+  }
+
+  if (!ticket) {
+    return (
+      <div className="flex flex-col min-h-screen bg-gray-50 overscroll-none">
+        <ScreenHeader title="History" showSettings={false} />
+        <div className="flex flex-col gap-4 px-5 py-4 md:px-8 md:py-6 max-w-3xl mx-auto w-full">
+          <div className="flex flex-col items-center justify-center gap-4 text-center py-8">
+            <p className="text-gray-500">No active ticket. Join a queue first.</p>
+            <button
+              onClick={() => navigate('/branches')}
+              className="bg-green-500 text-white font-bold rounded-2xl py-3 px-8 hover:bg-green-600"
+            >
+              Find a Branch
+            </button>
+          </div>
+          <PastTickets entries={history} />
         </div>
       </div>
     )
@@ -37,9 +114,8 @@ export default function TicketPage() {
 
   const handleCancel = async () => {
     try {
-      await axios.delete(`/api/queue/${ticket.id}/cancel`)
-      // ✅ Fixed: setTicket → setMyTicket
-      useQueueStore.getState().setMyTicket(null)
+      await queueApi.cancel(ticket.id)
+      setMyTicket(null)
       toast.success('Ticket cancelled')
       navigate('/home')
     } catch {
@@ -83,13 +159,17 @@ export default function TicketPage() {
               </div>
             </div>
 
-            {/* QR code placeholder */}
-            <div className="mt-4 mx-auto w-28 h-28 bg-gray-100 rounded-xl flex items-center justify-center border border-gray-200">
-              <div className="grid grid-cols-3 gap-1 p-2">
-                {Array.from({ length: 9 }).map((_, i) => (
-                  <div key={i} className={`w-4 h-4 rounded-sm ${[0,2,4,6,8].includes(i) ? 'bg-gray-800' : 'bg-white'}`} />
-                ))}
-              </div>
+            {/* QR code — real, scannable, generated server-side (queue-service/QrCodeService via ZXing) */}
+            <div className="mt-4 mx-auto w-28 h-28 bg-gray-100 rounded-xl flex items-center justify-center border border-gray-200 overflow-hidden">
+              {ticket.qrCodeImage ? (
+                <img src={ticket.qrCodeImage} alt="Ticket QR code" className="w-full h-full object-contain" />
+              ) : (
+                <div className="grid grid-cols-3 gap-1 p-2">
+                  {Array.from({ length: 9 }).map((_, i) => (
+                    <div key={i} className={`w-4 h-4 rounded-sm ${[0,2,4,6,8].includes(i) ? 'bg-gray-800' : 'bg-white'}`} />
+                  ))}
+                </div>
+              )}
             </div>
             <p className="text-xs text-gray-400 text-center mt-1">{ticket.qrCode ?? 'DHA-ST-99234812'}</p>
           </div>
@@ -157,6 +237,8 @@ export default function TicketPage() {
         <p className="text-xs text-gray-400 text-center">
           Please remain within 500m of the branch to keep your position. You will receive a push notification when you are 3rd in line.
         </p>
+
+        <PastTickets entries={history.filter((h) => h.id !== ticket.id)} />
       </div>
     </div>
   )

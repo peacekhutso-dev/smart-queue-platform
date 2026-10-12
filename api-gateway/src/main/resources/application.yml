@@ -81,7 +81,12 @@ spring:
                 - Path=/api/catalog/**
           httpclient:
             connect-timeout: 5000
-            response-timeout: 10s
+            # Face verification (verification-service -> face-service,
+            # DeepFace/Facenet512 CPU inference) can genuinely take 30s+ on
+            # this hardware — 10s was cutting it off mid-request even on
+            # calls that were about to succeed (see verification-service's
+            # own RestTemplateConfig, which has the matching reasoning).
+            response-timeout: 60s
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -92,7 +97,9 @@ app:
   identity-service:
     url: ${IDENTITY_SERVICE_URL:http://localhost:8085}
   zero-trust:
-    dev-bypass: ${ZERO_TRUST_BYPASS:true}
+    dev-bypass: ${ZERO_TRUST_BYPASS:false}
+  gateway:
+    shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
 
 management:
   endpoints:
@@ -111,4 +118,5 @@ management:
 
 logging:
   level:
+    com.dha.gateway: INFO
     org.springframework.cloud.gateway: INFO

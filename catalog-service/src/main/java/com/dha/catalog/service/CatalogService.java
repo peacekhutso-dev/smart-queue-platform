@@ -17,6 +17,9 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -27,12 +30,34 @@ public class CatalogService {
     private final ServiceOfferingRepository serviceOfferingRepository;
     private final DocumentRequirementRepository documentRequirementRepository;
 
+    // Batches the whole catalog into 3 queries total (applicant types,
+    // services for all of them, documents for all of those services)
+    // instead of 1 + one-per-applicant-type + one-per-service — this method
+    // is what backs the frontend's full-catalog load on every page visit.
     public CatalogResponse getFullCatalog() {
-        List<ApplicantTypeResponse> applicantTypes = applicantTypeRepository.findByActiveTrueOrderByDisplayOrderAsc()
-                .stream()
-                .map(this::mapApplicantTypeWithServices)
+        List<ApplicantType> applicantTypes = applicantTypeRepository.findByActiveTrueOrderByDisplayOrderAsc();
+
+        List<ServiceOffering> allServices = serviceOfferingRepository
+                .findByApplicantTypeInAndActiveTrueOrderByDisplayOrderAsc(applicantTypes);
+        Map<Long, List<ServiceOffering>> servicesByApplicantType = allServices.stream()
+                .collect(Collectors.groupingBy(s -> s.getApplicantType().getId()));
+
+        List<DocumentRequirement> allDocuments = documentRequirementRepository
+                .findByServiceOfferingInOrderByDisplayOrderAsc(allServices);
+        Map<Long, List<DocumentRequirement>> documentsByService = allDocuments.stream()
+                .collect(Collectors.groupingBy(d -> d.getServiceOffering().getId()));
+
+        Function<ServiceOffering, ServiceOfferingResponse> mapService = service ->
+                mapServiceWithDocuments(service, documentsByService.getOrDefault(service.getId(), List.of()));
+
+        List<ApplicantTypeResponse> response = applicantTypes.stream()
+                .map(at -> mapApplicantType(at,
+                        servicesByApplicantType.getOrDefault(at.getId(), List.of()).stream()
+                                .map(mapService)
+                                .toList()))
                 .toList();
-        return CatalogResponse.builder().applicantTypes(applicantTypes).build();
+
+        return CatalogResponse.builder().applicantTypes(response).build();
     }
 
     public List<ApplicantTypeResponse> getApplicantTypes() {
@@ -66,15 +91,6 @@ public class CatalogService {
                 .toList();
     }
 
-    private ApplicantTypeResponse mapApplicantTypeWithServices(ApplicantType applicantType) {
-        List<ServiceOfferingResponse> services = serviceOfferingRepository
-                .findByApplicantTypeAndActiveTrueOrderByDisplayOrderAsc(applicantType)
-                .stream()
-                .map(this::mapServiceWithDocuments)
-                .toList();
-        return mapApplicantType(applicantType, services);
-    }
-
     private ApplicantTypeResponse mapApplicantType(ApplicantType applicantType, List<ServiceOfferingResponse> services) {
         return ApplicantTypeResponse.builder()
                 .id(applicantType.getId())
@@ -86,9 +102,12 @@ public class CatalogService {
     }
 
     private ServiceOfferingResponse mapServiceWithDocuments(ServiceOffering service) {
-        List<DocumentRequirementResponse> documents = documentRequirementRepository
-                .findByServiceOfferingOrderByDisplayOrderAsc(service)
-                .stream()
+        return mapServiceWithDocuments(service, documentRequirementRepository
+                .findByServiceOfferingOrderByDisplayOrderAsc(service));
+    }
+
+    private ServiceOfferingResponse mapServiceWithDocuments(ServiceOffering service, List<DocumentRequirement> documentEntities) {
+        List<DocumentRequirementResponse> documents = documentEntities.stream()
                 .map(this::mapDocumentRequirement)
                 .toList();
 

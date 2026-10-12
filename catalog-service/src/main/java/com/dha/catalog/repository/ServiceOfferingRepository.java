@@ -10,5 +10,6 @@ import java.util.Optional;
 public interface ServiceOfferingRepository extends JpaRepository<ServiceOffering, Long> {
     Optional<ServiceOffering> findByCode(String code);
     List<ServiceOffering> findByApplicantTypeAndActiveTrueOrderByDisplayOrderAsc(ApplicantType applicantType);
+    List<ServiceOffering> findByApplicantTypeInAndActiveTrueOrderByDisplayOrderAsc(List<ApplicantType> applicantTypes);
     List<ServiceOffering> findByActiveTrueOrderByDisplayOrderAsc();
 }

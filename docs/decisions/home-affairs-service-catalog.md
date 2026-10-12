@@ -1,3 +1,4 @@
+
 # Business Logic: Home Affairs Digital Service Management Module
 
 **Status:** Proposed — not yet implemented (see [Implementation Status](#implementation-status))

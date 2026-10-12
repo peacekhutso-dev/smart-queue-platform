@@ -26,16 +26,28 @@ spring:
       timeout: 2000ms
 
 app:
+  frontend:
+    url: ${FRONTEND_URL:http://localhost:5173}
+  gateway:
+    shared-secret: ${GATEWAY_SHARED_SECRET:dev-only-insecure-shared-secret-change-me}
   jwt:
     expiry: ${JWT_EXPIRY:86400000}
+    cookie-secure: ${JWT_COOKIE_SECURE:true}
   otp:
     expiry-minutes: 5
     length: 6
+    # Dev-only: no SMS/email provider is wired up here, so with OTP logging
+    # also removed for security, there's no way to complete 2FA locally
+    # without this or reading Redis directly. Must stay false anywhere real.
+    dev-expose-otp: ${OTP_DEV_EXPOSE:false}
   password-reset:
     expiry-minutes: 15
   zero-trust:
     two-fa-ttl-hours: ${TWO_FA_TTL_HOURS:8}
     fingerprint-ttl-hours: ${FINGERPRINT_SESSION_TTL_HOURS:4}
+    # Gate 1.5: login confirms SA ID + name against the seeded Home Affairs
+    # record (see AuthService.confirmIdentity / CitizenRecordSeeder).
+    identity-confirm-ttl-hours: ${IDENTITY_CONFIRM_TTL_HOURS:8}
   webauthn:
     rp-id: ${WEBAUTHN_RP_ID:localhost}
     rp-name: DHA Smart Queue Admin

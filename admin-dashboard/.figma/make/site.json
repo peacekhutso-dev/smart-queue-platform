@@ -1,0 +1,11 @@
+
+{
+  "description": "Streamlines queue management for Department of Home Affairs staff with real-time stats, ticket tracking, and customer service tools to boost efficiency.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

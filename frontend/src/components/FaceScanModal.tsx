@@ -67,20 +67,10 @@ export default function FaceScanModal() {
       stopCamera()
       setTimeout(() => {
         onFaceSuccess()
-        toast.success('Face verified — access granted')
+        toast.success('Identity verified against DHA record')
       }, 800)
     } catch (err: unknown) {
-      const data = (err as { response?: { data?: { data?: { code?: string }; message?: string } } })?.response?.data
-      const code = data?.data?.code
-
-      if (code === 'NO_ENROLLMENT') {
-        stopCamera()
-        onFaceCancel()
-        toast.error('No face enrolled. Please complete face setup.')
-        window.location.href = '/verify-face?mode=enroll'
-        return
-      }
-
+      const data = (err as { response?: { data?: { message?: string } } })?.response?.data
       setPhase('error')
       setMessage(data?.message ?? 'Face not recognized. Please try again.')
     }

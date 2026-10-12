@@ -76,6 +76,7 @@ export interface QueueEntry {
   estimatedWaitMinutes: number;
   counterNumber?: string;
   qrCode?: string;
+  qrCodeImage?: string;
   branchId: number;
   branchName: string;
   branchAddress: string;

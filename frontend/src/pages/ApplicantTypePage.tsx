@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { User, BadgeCheck, Globe2, LifeBuoy, ChevronRight, FileQuestion } from 'lucide-react'
+import { User, BadgeCheck, Globe2, LifeBuoy, ChevronRight, ChevronLeft, FileQuestion } from 'lucide-react'
 import { useCatalogStore } from '@/store/CatalogStore'
 
 // Presentational only — icon choice per applicant-type code, not DHA business
@@ -28,11 +28,15 @@ export default function ApplicantTypePage() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <div className="flex items-center justify-center px-5 h-20 border-b border-gray-100">
-        <div className="text-center">
+      <div className="flex items-center px-5 h-20 border-b border-gray-100">
+        <button onClick={() => navigate(-1)} className="p-1 rounded-full hover:bg-gray-100 shrink-0">
+          <ChevronLeft className="w-5 h-5 text-gray-600" />
+        </button>
+        <div className="flex-1 text-center">
           <span className="text-base font-semibold text-gray-900">Department of Home Affairs</span>
           <p className="text-xs text-gray-400 mt-0.5">Step 1 of 3 · Who are you applying as?</p>
         </div>
+        <div className="w-7 shrink-0" />
       </div>
 
       <div className="px-5 md:px-8 py-6 flex flex-col gap-5 w-full max-w-2xl mx-auto">

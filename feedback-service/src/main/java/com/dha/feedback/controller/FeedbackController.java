@@ -21,7 +21,7 @@ public class FeedbackController {
     public ResponseEntity<ApiResponse<Void>> submit(
             @Valid @RequestBody FeedbackRequest request,
             @AuthenticationPrincipal JwtPrincipal principal) {
-        feedbackService.submitFeedback(request, principal.userId());
+        feedbackService.submitFeedback(request, principal.userId(), principal.role());
         return ResponseEntity.ok(ApiResponse.ok("Feedback submitted. Thank you!", null));
     }
 }

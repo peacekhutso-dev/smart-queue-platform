@@ -1,61 +1,78 @@
 """
 DHA Face Verification Service
 Uses DeepFace (Facenet-512) for face recognition.
-Stores reference embeddings in Redis.
+
+DHA already has the citizen's photo on file — it's the face photo from their
+verified SA ID/passport document (stored in document-service, linked to that
+citizen's ID number). There is no separate biometric enrollment step and
+nothing is persisted here: every /verify call is handed both the live
+capture and that on-file reference photo (verification-service fetches it
+from document-service fresh each time) and simply compares the two. A
+userId with no verified ID document on file has nothing to compare against,
+so verification-service fails that request closed before it ever reaches
+here — this service never treats "no reference photo" as a pass.
 
 Endpoints:
-  POST /enroll  — store reference embedding for a userId
-  POST /verify  — compare live capture against stored embedding
-  GET  /health  — health check
+  POST /verify           — compare a live capture against the DHA record (reference) photo
+  POST /check-liveness   — passive anti-spoofing check (see liveness_service.py)
+  GET  /health           — health check
 """
 
 from __future__ import annotations
 
 import base64
+import hmac
 import io
-import json
 import os
 import logging
 
 import numpy as np
-import redis
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, Header, HTTPException
 from PIL import Image
 from pydantic import BaseModel
 from deepface import DeepFace
+
+import liveness_service
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 MODEL_NAME  = "Facenet512"   # 512-dim embedding, excellent accuracy
 METRIC      = "cosine"
 THRESHOLD   = 0.30           # cosine distance ≤ 0.30 → same person (strict)
-EMBEDDING_KEY_PREFIX = "face-embedding:"
+GATEWAY_SHARED_SECRET = os.getenv("GATEWAY_SHARED_SECRET", "dev-only-insecure-shared-secret-change-me")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("face-service")
 
 app = FastAPI(title="DHA Face Verification Service", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORSMiddleware: this service is only ever called service-to-service by
+# verification-service, never directly from a browser, so there is no origin
+# to allow — a wildcard here previously let any web page script requests to
+# it if it could also guess/brute-force the (previously nonexistent) auth.
 
-redis_client = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", 6379)),
-    decode_responses=True,
-)
+
+def require_gateway_secret(x_gateway_secret: str | None = Header(default=None)):
+    """Only verification-service (which knows GATEWAY_SHARED_SECRET) may call
+    this service. Without this, this service's userId-keyed DHA-record
+    enrollment/verification was reachable by anyone who could reach its
+    published port, with the request body's userId trusted outright —
+    letting an attacker overwrite or verify against any victim's biometric
+    record."""
+    if not x_gateway_secret or not hmac.compare_digest(x_gateway_secret, GATEWAY_SHARED_SECRET):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
 
 class FaceRequest(BaseModel):
-    userId: int
+    userId: str
+    imageBase64: str            # live capture from the citizen's camera
+    referenceImageBase64: str   # the on-file DHA record photo (from their verified ID document)
+
+
+class LivenessRequest(BaseModel):
     imageBase64: str
 
 
@@ -93,82 +110,80 @@ def cosine_distance(a: list[float], b: list[float]) -> float:
 
 @app.get("/health")
 def health():
-    try:
-        redis_client.ping()
-        redis_ok = True
-    except Exception:
-        redis_ok = False
-    return {"status": "ok", "redis": redis_ok, "model": MODEL_NAME}
+    return {"status": "ok", "model": MODEL_NAME}
 
 
-@app.post("/enroll")
-def enroll(req: FaceRequest):
-    """Store a reference face embedding for the given userId."""
-    try:
-        img = decode_image(req.imageBase64)
-        embedding = get_embedding(img)
-
-        key = f"{EMBEDDING_KEY_PREFIX}{req.userId}"
-        redis_client.set(key, json.dumps(embedding))
-
-        log.info("Enrolled face for userId=%s  embedding_dim=%d", req.userId, len(embedding))
-        return {"success": True, "message": "Face enrolled successfully", "userId": req.userId}
-
-    except ValueError as exc:
-        log.warning("Enrollment rejected userId=%s: %s", req.userId, exc)
-        raise HTTPException(status_code=400, detail=f"No face detected: {exc}")
-    except Exception as exc:
-        log.error("Enrollment error userId=%s: %s", req.userId, exc)
-        raise HTTPException(status_code=500, detail=f"Enrollment failed: {exc}")
-
-
-@app.post("/verify")
+@app.post("/verify", dependencies=[Depends(require_gateway_secret)])
 def verify(req: FaceRequest):
-    """Compare live capture against stored reference embedding."""
-    key = f"{EMBEDDING_KEY_PREFIX}{req.userId}"
-    stored_json = redis_client.get(key)
+    """Compare a live capture against the DHA record (reference) photo.
 
-    if not stored_json:
-        log.info("No enrollment found for userId=%s", req.userId)
-        return {
-            "verified": False,
-            "noEnrollment": True,
-            "message": "No face enrolled for this user. Please enroll first.",
-        }
-
+    Both images arrive on every call — nothing is persisted or enrolled
+    here. verification-service is responsible for fetching the reference
+    photo (the citizen's verified ID document photo) from document-service
+    fresh each time and is what enforces that a userId with no such document
+    on file gets rejected before ever reaching this endpoint.
+    """
     try:
-        stored_embedding = json.loads(stored_json)
-        img = decode_image(req.imageBase64)
-        live_embedding = get_embedding(img)
-
-        distance   = cosine_distance(stored_embedding, live_embedding)
-        verified   = distance <= THRESHOLD
-        similarity = 1.0 - distance
-
-        log.info(
-            "Verification userId=%s  distance=%.4f  threshold=%.2f  result=%s",
-            req.userId, distance, THRESHOLD, "PASS" if verified else "FAIL",
-        )
-
-        return {
-            "verified":    verified,
-            "noEnrollment": False,
-            "distance":    round(distance, 4),
-            "similarity":  round(similarity, 4),
-            "threshold":   THRESHOLD,
-            "message":     "Face verified" if verified else "Face does not match",
-        }
-
+        live_embedding = get_embedding(decode_image(req.imageBase64))
     except ValueError as exc:
-        log.warning("Verification no-face userId=%s: %s", req.userId, exc)
-        return {
-            "verified": False,
-            "noEnrollment": False,
-            "message": f"No face detected in image: {exc}",
-        }
+        log.warning("Verification no-face (live capture) userId=%s: %s", req.userId, exc)
+        return {"verified": False, "message": f"No face detected in image: {exc}"}
     except Exception as exc:
         log.error("Verification error userId=%s: %s", req.userId, exc)
         raise HTTPException(status_code=500, detail=f"Verification failed: {exc}")
+
+    try:
+        reference_embedding = get_embedding(decode_image(req.referenceImageBase64))
+    except ValueError as exc:
+        log.error("No face detected in DHA record photo userId=%s: %s", req.userId, exc)
+        raise HTTPException(status_code=422, detail=f"No face detected in the on-file DHA record photo: {exc}")
+    except Exception as exc:
+        log.error("Reference photo error userId=%s: %s", req.userId, exc)
+        raise HTTPException(status_code=500, detail=f"Verification failed: {exc}")
+
+    distance   = cosine_distance(reference_embedding, live_embedding)
+    verified   = distance <= THRESHOLD
+    similarity = 1.0 - distance
+
+    log.info(
+        "Verification userId=%s  distance=%.4f  threshold=%.2f  result=%s",
+        req.userId, distance, THRESHOLD, "PASS" if verified else "FAIL",
+    )
+
+    return {
+        "verified":   verified,
+        "distance":   round(distance, 4),
+        "similarity": round(similarity, 4),
+        "threshold":  THRESHOLD,
+        "message":    "Face verified against DHA record" if verified else "Face does not match DHA record",
+    }
+
+
+@app.post("/check-liveness", dependencies=[Depends(require_gateway_secret)])
+def check_liveness(req: LivenessRequest):
+    """Passive anti-spoofing check — see liveness_service.py for the model
+    and docs/decisions/face-verification-vendor-selection.md for why this
+    replaced the external Luxand Cloud call (self-hosted, no vendor quota,
+    no biometric frame leaving this infrastructure — same passive-only
+    limitation as before, just no longer someone else's API to run out of)."""
+    try:
+        img = decode_image(req.imageBase64)
+    except Exception as exc:
+        log.warning("Liveness check: could not decode image: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Could not decode image: {exc}")
+
+    try:
+        is_live, confidence = liveness_service.check_liveness(img)
+    except Exception as exc:
+        log.error("Liveness check error: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Liveness check failed: {exc}")
+
+    log.info("Liveness check: live=%s confidence=%.4f", is_live, confidence)
+    return {
+        "live": is_live,
+        "confidence": round(confidence, 4),
+        "message": "Live person confirmed" if is_live else "Liveness check failed — please use a live camera capture",
+    }
 
 
 if __name__ == "__main__":

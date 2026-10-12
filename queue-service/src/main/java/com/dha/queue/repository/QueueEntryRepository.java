@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -25,16 +26,20 @@ public interface QueueEntryRepository extends JpaRepository<QueueEntry, Long> {
 
     long countByBranchIdAndStatusIn(Long branchId, List<QueueStatus> statuses);
 
-    @Query("SELECT MAX(q.ticketNumber) FROM QueueEntry q WHERE q.branchId = :branchId AND q.joinedAt >= :since")
+    @Query("SELECT MAX(q.ticketNumber) FROM QueueEntry q WHERE q.branchId = :branchId AND q.ticketDate = :today")
     Optional<String> findMaxTicketNumberForBranchToday(
             @Param("branchId") Long branchId,
-            @Param("since") LocalDateTime since
+            @Param("today") LocalDate today
     );
 
     List<QueueEntry> findByUserIdOrderByJoinedAtDesc(UUID userId);
 
     long countByBranchIdAndStatusAndJoinedAtBetween(
             Long branchId, QueueStatus status, LocalDateTime start, LocalDateTime end
+    );
+
+    long countByBranchIdAndJoinedAtBetween(
+            Long branchId, LocalDateTime start, LocalDateTime end
     );
 
     @Query("SELECT q FROM QueueEntry q WHERE q.branchId = :branchId AND q.status IN :statuses ORDER BY q.joinedAt ASC")

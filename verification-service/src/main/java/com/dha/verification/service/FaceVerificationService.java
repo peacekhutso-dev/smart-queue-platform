@@ -1,6 +1,6 @@
 package com.dha.verification.service;
 
-import com.dha.verification.client.LuxandLivenessClient;
+import com.dha.verification.client.DocumentServiceClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,8 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.Base64;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -21,7 +21,8 @@ import java.util.concurrent.TimeUnit;
 public class FaceVerificationService {
 
     private final RedisTemplate<String, Object> redisTemplate;
-    private final LuxandLivenessClient luxandClient;
+    private final RestTemplate restTemplate;
+    private final DocumentServiceClient documentServiceClient;
 
     @Value("${app.face.service-url:http://localhost:8002}")
     private String faceServiceUrl;
@@ -32,84 +33,86 @@ public class FaceVerificationService {
     @Value("${app.face.dev-bypass:false}")
     private boolean devBypass;
 
+    @Value("${app.gateway.shared-secret}")
+    private String gatewaySharedSecret;
+
     private static final String FACE_SESSION_PREFIX = "face:";
 
-    public record EnrollResult(boolean success, String message, boolean livenessFailed) {}
-    public record VerifyResult(boolean verified, boolean noEnrollment, String message, boolean livenessFailed) {}
+    public record VerifyResult(boolean verified, String message, boolean livenessFailed, boolean noDocumentOnFile) {}
 
-    // ── Enrollment (first-time setup) ────────────────────────────────────────
-
-    public EnrollResult enrollFace(UUID userId, String imageBase64) {
-        if (devBypass) {
-            log.warn("DEV_BYPASS: face enrollment skipped for userId={}", userId);
-            return new EnrollResult(true, "Dev bypass — enrollment accepted", false);
-        }
-
-        // Liveness (Luxand) gates the match — see
-        // docs/decisions/face-verification-vendor-selection.md for why the
-        // match itself stays on the self-hosted face-service below.
-        LuxandLivenessClient.LivenessResult liveness = luxandClient.checkLiveness(decodeImage(imageBase64));
-        if (!liveness.live()) {
-            log.warn("Liveness check failed for enrollment userId={}: {}", userId, liveness.message());
-            return new EnrollResult(false, liveness.message(), true);
-        }
-
-        try {
-            ResponseEntity<Map> res = post("/enroll", Map.of("userId", userId, "imageBase64", imageBase64));
-            if (res.getStatusCode().is2xxSuccessful() && Boolean.TRUE.equals(res.getBody().get("success"))) {
-                log.info("Face enrolled userId={}", userId);
-                return new EnrollResult(true, "Face enrolled successfully", false);
-            }
-            String msg = res.getBody() != null ? String.valueOf(res.getBody().get("message")) : "Rejected";
-            return new EnrollResult(false, msg, false);
-        } catch (ResourceAccessException e) {
-            log.error("Face service unreachable (enroll): {}", e.getMessage());
-            return new EnrollResult(false, "Face service is unavailable — try again later", false);
-        } catch (Exception e) {
-            log.error("Enrollment error userId={}: {}", userId, e.getMessage());
-            return new EnrollResult(false, "Enrollment failed: " + e.getMessage(), false);
-        }
-    }
-
-    // ── Verification (session renewal) ───────────────────────────────────────
+    // ── Verification against the DHA record ────────────────────────────────────
+    // DHA already has the citizen's photo on file — the face photo from their
+    // verified SA ID/passport upload in document-service. Every call here
+    // fetches that photo fresh and hands both it and the live capture to
+    // face-service to compare; nothing is enrolled or persisted as a side
+    // effect of a scan. A citizen with no verified ID document on file yet has
+    // nothing to verify against, so that's rejected here before ever reaching
+    // face-service.
 
     public VerifyResult verifyFace(UUID userId, String imageBase64) {
         if (devBypass) {
             log.warn("DEV_BYPASS: face verification auto-approved for userId={}", userId);
             grantSession(userId);
-            return new VerifyResult(true, false, "Dev bypass — verification accepted", false);
+            return new VerifyResult(true, "Dev bypass — verification accepted", false, false);
         }
 
-        LuxandLivenessClient.LivenessResult liveness = luxandClient.checkLiveness(decodeImage(imageBase64));
-        if (!liveness.live()) {
-            log.warn("Liveness check failed for verification userId={}: {}", userId, liveness.message());
-            return new VerifyResult(false, false, liveness.message(), true);
+        // Liveness gates the match — passive anti-spoofing check, now
+        // self-hosted on face-service itself (see face-service/liveness_service.py
+        // and docs/decisions/face-verification-vendor-selection.md, which
+        // originally chose Luxand Cloud for this step; that ADR is now
+        // superseded by this self-hosted swap — see git history for why).
+        if (!checkLiveness(imageBase64)) {
+            log.warn("Liveness check failed for verification userId={}", userId);
+            return new VerifyResult(false, "Liveness check failed — please use a live camera capture", true, false);
+        }
+
+        Optional<DocumentServiceClient.FacePhoto> facePhoto = documentServiceClient.getFacePhoto(userId);
+        if (facePhoto.isEmpty()) {
+            log.warn("No verified ID document on file for userId={} — nothing to verify against", userId);
+            return new VerifyResult(false, "No verified ID document on file yet — please complete ID verification first", false, true);
         }
 
         try {
-            ResponseEntity<Map> res = post("/verify", Map.of("userId", userId, "imageBase64", imageBase64));
+            ResponseEntity<Map> res = post("/verify", Map.of(
+                    "userId", userId,
+                    "imageBase64", imageBase64,
+                    "referenceImageBase64", facePhoto.get().imageBase64()));
             Map<?, ?> body = res.getBody();
-            if (body == null) return new VerifyResult(false, false, "Empty response from face service", false);
+            if (body == null) return new VerifyResult(false, "Empty response from face service", false, false);
 
-            boolean verified     = Boolean.TRUE.equals(body.get("verified"));
-            boolean noEnrollment = Boolean.TRUE.equals(body.get("noEnrollment"));
-            String  message      = body.containsKey("message") ? String.valueOf(body.get("message")) : "";
+            boolean verified = Boolean.TRUE.equals(body.get("verified"));
+            String  message  = body.containsKey("message") ? String.valueOf(body.get("message")) : "";
 
-            if (verified) grantSession(userId);
-            return new VerifyResult(verified, noEnrollment, message, false);
+            if (verified) {
+                log.info("Face verify PASSED userId={} distance={} similarity={}",
+                        userId, body.get("distance"), body.get("similarity"));
+                grantSession(userId);
+            } else {
+                log.warn("Face verify FAILED userId={} reason=\"{}\" distance={} similarity={}",
+                        userId, message, body.get("distance"), body.get("similarity"));
+            }
+            return new VerifyResult(verified, message, false, false);
 
         } catch (ResourceAccessException e) {
             log.error("Face service unreachable (verify): {}", e.getMessage());
-            return new VerifyResult(false, false, "Face service is unavailable — try again later", false);
+            return new VerifyResult(false, "Face service is unavailable — try again later", false, false);
         } catch (Exception e) {
             log.error("Verification error userId={}: {}", userId, e.getMessage());
-            return new VerifyResult(false, false, "Verification error: " + e.getMessage(), false);
+            return new VerifyResult(false, "Verification error: " + e.getMessage(), false, false);
         }
     }
 
-    private byte[] decodeImage(String imageBase64) {
-        String data = imageBase64.contains(",") ? imageBase64.substring(imageBase64.indexOf(',') + 1) : imageBase64;
-        return Base64.getDecoder().decode(data);
+    // Fails closed (treats as not-live) on any error — an unreachable or
+    // erroring liveness check must never silently let a verification through.
+    private boolean checkLiveness(String imageBase64) {
+        try {
+            ResponseEntity<Map> res = post("/check-liveness", Map.of("imageBase64", imageBase64));
+            Map<?, ?> body = res.getBody();
+            return body != null && Boolean.TRUE.equals(body.get("live"));
+        } catch (Exception e) {
+            log.error("Liveness check error: {}", e.getMessage());
+            return false;
+        }
     }
 
     // ── Redis session helpers ─────────────────────────────────────────────────
@@ -131,9 +134,9 @@ public class FaceVerificationService {
 
     @SuppressWarnings("unchecked")
     private ResponseEntity<Map> post(String path, Map<String, Object> body) {
-        RestTemplate rt = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        return rt.exchange(faceServiceUrl + path, HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+        headers.set("X-Gateway-Secret", gatewaySharedSecret);
+        return restTemplate.exchange(faceServiceUrl + path, HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
     }
 }

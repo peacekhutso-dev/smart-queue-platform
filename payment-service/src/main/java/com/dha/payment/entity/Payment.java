@@ -11,9 +11,7 @@ import java.util.UUID;
  * No PAN/card data ever lives here — provider is given a hosted checkout/token
  * flow, we only ever store the provider's own session/reference ids.
  *
- * userId/queueEntryId are plain ids into other services' data (no FK) — they're
- * Long today because identity/queue still mint Long ids; this becomes a UUID
- * once identity-service does its UUID migration (see migration plan Phase 3).
+ * userId/queueEntryId are plain ids into other services' data (no FK).
  */
 @Entity
 @Table(name = "payments")
@@ -28,7 +26,7 @@ public class Payment {
     private UUID id;
 
     @Column(nullable = false)
-    private Long userId;
+    private UUID userId;
 
     private Long queueEntryId;
 

@@ -1,5 +1,6 @@
 package com.dha.feedback.client;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -15,13 +16,14 @@ import java.util.Map;
  * table.
  */
 @Component
+@RequiredArgsConstructor
 @Slf4j
 public class BranchClient {
 
     @Value("${app.branch-service.url:http://localhost:8087}")
     private String branchServiceUrl;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
     public record BranchInfo(
             Long id, String name, String address,

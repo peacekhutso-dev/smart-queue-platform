@@ -1,0 +1,25 @@
+# Local-dev overlay — never use on the shared server.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Publishes both MySQL instances on the host for a DB GUI (e.g. Sequel Ace):
+#   main MySQL    -> 127.0.0.1:3306
+#   payment MySQL -> 127.0.0.1:3307
+# and the ML service on 127.0.0.1:8001 for poking at it directly.
+
+services:
+  mysql:
+    ports:
+      - "127.0.0.1:3306:3306"
+
+  payment-mysql:
+    ports:
+      - "127.0.0.1:3307:3306"
+
+  # ML service (FastAPI) — interactive API docs at http://127.0.0.1:8001/docs
+  ml-service:
+    ports:
+      - "127.0.0.1:8001:8001"
+
+  # Vite dev servers (frontend :5173, admin-dashboard :8443) proxy to here.
+  api-gateway:
+    ports:
+      - "127.0.0.1:8080:8080"

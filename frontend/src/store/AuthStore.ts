@@ -15,7 +15,6 @@ const TWO_FA_TTL_MS = 8  * 60 * 60 * 1000   // 8 hours
 const FACE_TTL_MS   = 4  * 60 * 60 * 1000   // 4 hours
 
 interface AuthState {
-  token:     string | null
   user:      AuthUser | null
   isAuthenticated: boolean
   pendingPhone:    string | null
@@ -34,7 +33,7 @@ interface AuthState {
   isFaceValid:  () => boolean
 
   // ── Actions ───────────────────────────────────────────────────────────────
-  setAuth:          (user: AuthUser, token: string) => void
+  setAuth:          (user: AuthUser) => void
   setPending:       (phone: string) => void
   set2faVerified:   () => void
   setFaceVerified:  () => void
@@ -42,16 +41,22 @@ interface AuthState {
   closeFaceModal:   () => void
   onFaceSuccess:    () => void
   onFaceCancel:     () => void
-  logout:           () => void
+  logout:           () => Promise<void>
 }
 
+// The JWT itself lives in an httpOnly cookie now (set by identity-service),
+// invisible to JS — this is just a non-sensitive local hint so the app
+// knows whether to expect an authenticated session across reloads without
+// needing to read the (unreadable) cookie. It grants nothing by itself; the
+// cookie is the only thing any backend service actually trusts.
+const AUTHED_HINT_KEY = 'dha_authed'
+
 export const useAuthStore = create<AuthState>((set, get) => ({
-  token:   localStorage.getItem('dha_token'),
   user: (() => {
     try { const u = localStorage.getItem('dha_user'); return u ? JSON.parse(u) : null }
     catch { return null }
   })(),
-  isAuthenticated: !!localStorage.getItem('dha_token'),
+  isAuthenticated: localStorage.getItem(AUTHED_HINT_KEY) === '1',
   pendingPhone:    null,
 
   twoFaVerifiedAt: (() => {
@@ -79,10 +84,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  setAuth: (user, token) => {
-    localStorage.setItem('dha_token', token)
+  setAuth: (user) => {
+    localStorage.setItem(AUTHED_HINT_KEY, '1')
     localStorage.setItem('dha_user', JSON.stringify(user))
-    set({ user, token, isAuthenticated: true })
+    set({ user, isAuthenticated: true })
   },
 
   setPending: (phone) => set({ pendingPhone: phone }),
@@ -118,15 +123,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     cb?.()
   },
 
-  logout: () => {
-    localStorage.removeItem('dha_token')
+  logout: async () => {
+    localStorage.removeItem(AUTHED_HINT_KEY)
     localStorage.removeItem('dha_user')
     localStorage.removeItem('dha_2fa_at')
     localStorage.removeItem('dha_face_at')
     set({
-      token: null, user: null, isAuthenticated: false, pendingPhone: null,
+      user: null, isAuthenticated: false, pendingPhone: null,
       twoFaVerifiedAt: null, faceVerifiedAt: null,
       showFaceModal: false, _faceOnSuccess: null, _faceOnCancel: null,
     })
+    // The token is an httpOnly cookie — only the server can clear it.
+    try {
+      const base = import.meta.env.VITE_API_URL ?? ''
+      await fetch(`${base}/api/auth/logout`, { method: 'POST', credentials: 'include' })
+    } catch {
+      // Local state is already cleared; a failed logout call just leaves a
+      // stale cookie that'll expire on its own.
+    }
   },
 }))

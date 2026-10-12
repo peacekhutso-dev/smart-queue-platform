@@ -1,34 +1,12 @@
-import axios from 'axios';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-
-const api = axios.create({
-  baseURL: `${API_URL}/api`,
-  headers: { 'Content-Type': 'application/json' },
-  timeout: 15000,
-});
-
-// Request interceptor — attach JWT
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('dha_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// Response interceptor — handle 401
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('dha_token');
-      localStorage.removeItem('dha_user');
-      window.location.href = '/login';
-    }
-    return Promise.reject(error);
-  }
-);
+// Reuses the shared client (relative '/api' baseURL, proxied same-origin
+// through nginx) instead of building a second axios instance pointed at the
+// Gateway's absolute origin — that second client bypassed the nginx proxy
+// entirely, turning every call cross-origin. Simple GET/POST requests mostly
+// got away with it, but the Gateway has no CORS config of its own (it's only
+// ever meant to be reached same-origin — see Axios.ts), so any non-simple
+// method (DELETE, PUT) failed its CORS preflight with a 403 and no
+// CORS headers, which is what made ticket cancellation silently fail.
+import api from './Axios';
 
 export default api;
 

@@ -189,7 +189,12 @@ export default function DocumentsPage() {
 
   const validCount = slots.filter(s => s.status === 'valid' || s.status === 'saved').length
   const progress   = requiredDocs.length > 0 ? Math.round((validCount / requiredDocs.length) * 100) : 0
-  const canProceed = validCount > 0 && !slots.some(s => s.status === 'uploading')
+  // Matches queue-service's QUEUE_SKIP_DOCUMENT_CHECK bypass — the
+  // document-type-extraction model that would auto-validate these isn't
+  // built yet, so this no longer hard-blocks on an upload. Citizens can
+  // still upload here if they have documents ready; final validation
+  // happens manually at the branch either way (see the copy below).
+  const canProceed = !slots.some(s => s.status === 'uploading')
 
   if (step === 'branch') {
     return (
@@ -308,7 +313,7 @@ export default function DocumentsPage() {
             <ChevronRight className="w-5 h-5" />
           </button>
           {!canProceed ? (
-            <p className="text-xs text-gray-400 text-center">Upload at least one document to continue</p>
+            <p className="text-xs text-gray-400 text-center">Waiting for upload to finish…</p>
           ) : (
             <p className="text-xs text-gray-400 text-center">
               Documents are pre-validated. Final approval at the branch.

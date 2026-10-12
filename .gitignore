@@ -36,3 +36,6 @@ build/
 
 # OS
 .DS_Store
+
+# Personal photos (ID / face test images) — never commit, they carry GPS EXIF
+Pictures/
