@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Shield, RotateCcw, Lock, AlertCircle, CheckCircle } from 'lucide-react'
+import { Shield, RotateCcw, Lock, AlertCircle, CheckCircle, LogOut } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../api/Axios'
 import { useAuthStore } from '../store/AuthStore'
@@ -16,7 +16,7 @@ export default function FaceVerifyPage() {
   const [params]       = useSearchParams()
   const returnTo       = params.get('returnTo') ?? '/home'
 
-  const { setFaceVerified } = useAuthStore()
+  const { setFaceVerified, logout } = useAuthStore()
 
   const videoRef  = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -91,6 +91,14 @@ export default function FaceVerifyPage() {
       setPhase('error')
       setMessage(msg ?? 'Verification failed. Please try again.')
     }
+  }
+
+  // A citizen who can't finish the scan now must never be trapped here —
+  // signing out and logging in later lands them straight back on this page.
+  const signOut = async () => {
+    stopCamera()
+    await logout()
+    navigate('/login', { replace: true })
   }
 
   const retry = () => {
@@ -218,6 +226,13 @@ export default function FaceVerifyPage() {
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Secure & Trusted Verification</p>
           </div>
         </div>
+
+        <button
+          onClick={signOut}
+          className="flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-gray-800"
+        >
+          <LogOut className="w-4 h-4" /> Sign out and try again later
+        </button>
       </div>
     </div>
   )

@@ -109,3 +109,19 @@ export const SERVICE_TYPE_LABELS: Record<string, string> = {
   MARRIAGE_CERTIFICATE: 'Marriage Certificate',
   GENERAL_ENQUIRY: 'Other Services',
 }
+
+// DEV ONLY: Home Affairs citizen record (Citizen Records dev tool).
+export interface CitizenRecord {
+  saIdNumber: string
+  firstName: string
+  middleName: string | null
+  lastName: string
+  dateOfBirth: string | null
+  gender: string | null
+  nationality: string | null
+  citizenshipStatus: string | null
+  phoneNumber: string | null
+  email: string | null
+  residentialAddress: string | null
+  hasPhoto: boolean
+}

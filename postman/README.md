@@ -43,8 +43,7 @@ the previous one created — don't skip around on a first run.
 | 2 | Send OTP | Dev mode returns the OTP directly in the response body; the test script saves it into `{{otp}}` automatically. |
 | 3 | Verify OTP | Submits `{{otp}}`. This grants **Gate 2** (2FA session, 8h). |
 | 4 | Verify SA ID | Submits a Luhn-valid sample SA ID number. |
-| 4b | Upload ID document | **Manual step**: click the `file` field's *Select Files* button and pick a real photo from disk before sending — Postman can't carry a file path inside the collection JSON for you. This is what Face Verify compares your live scan against. |
-| 5 | Face Verify | **Manual step**: paste a base64-encoded photo over `PASTE_BASE64_IMAGE_HERE` in the body (see below). This grants **Gate 3** (face session, 4h). |
+| 5 | Face Verify | **Manual step**: paste a base64-encoded photo over `PASTE_BASE64_IMAGE_HERE` in the body (see below). This grants **Gate 3** (face session, until the next login). |
 | 6 | Get current user | Confirms all three gates are open — a fully protected route. |
 | 7 | List branches | A real business endpoint, no special setup needed. |
 | 8 | Join queue | Uses `branchId: 1` by default — swap for a real ID from step 7's response if your seed data differs. |
@@ -62,14 +61,14 @@ base64 -i photo.jpg | pbcopy
 
 Then paste over `PASTE_BASE64_IMAGE_HERE` in step 5's request body.
 
-### Expected results if you skip step 4b
+### Getting an actual face match
 
-Face Verify checks your live scan against a citizen's **verified ID document
-photo on file** (fetched from `document-service`), not against the live scan
-itself. If you skip step 4b, step 5 correctly returns `400` with code
-`NO_ID_DOCUMENT` — that's the right, testable behaviour for an account with
-no document on file, not a bug. Run 4b first if you want an actual face
-*match* attempt instead.
+Face Verify checks your live scan against the photo on the citizen's **Home
+Affairs record** (identity-service), matched by the SA ID on your account.
+Citizens never upload it. Before step 5, sign in to the admin dashboard as
+`admin@dha.gov.za`, open **Citizen Records (dev)**, and upload a photo for the
+SA ID you registered with. Without one, step 5 correctly returns `400` with
+code `NO_DHA_PHOTO`. That's the right, testable behaviour, not a bug.
 
 ## 4. Re-running after the first pass
 

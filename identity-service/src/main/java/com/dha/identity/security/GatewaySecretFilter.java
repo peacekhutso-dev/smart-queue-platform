@@ -25,6 +25,9 @@ import java.security.MessageDigest;
  * and, for example, register a WebAuthn credential bound to that email —
  * full account takeover. This filter rejects any request carrying
  * X-User-Email unless X-Gateway-Secret matches app.gateway.shared-secret.
+ * The same applies to X-User-Role / X-User-Id (the admin citizen-records
+ * endpoints trust X-User-Role), and to every /internal/** request
+ * (service-to-service only), whether or not it carries identity headers.
  */
 @Component
 public class GatewaySecretFilter extends OncePerRequestFilter {
@@ -39,8 +42,11 @@ public class GatewaySecretFilter extends OncePerRequestFilter {
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
 
-        String userEmailHeader = request.getHeader("X-User-Email");
-        if (userEmailHeader != null) {
+        boolean carriesIdentity = request.getHeader("X-User-Email") != null
+                || request.getHeader("X-User-Role") != null
+                || request.getHeader("X-User-Id") != null;
+        boolean internalPath = request.getRequestURI().startsWith("/internal/");
+        if (carriesIdentity || internalPath) {
             String gatewaySecretHeader = request.getHeader("X-Gateway-Secret");
             boolean secretValid = gatewaySecretHeader != null && MessageDigest.isEqual(
                     gatewaySecretHeader.getBytes(StandardCharsets.UTF_8),

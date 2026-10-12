@@ -7,6 +7,7 @@ import OtpVerifyPage from './pages/OtpVerifyPage'
 import FingerprintGatePage from './pages/FingerprintGatePage'
 import DashboardPage from './pages/DashboardPage'
 import ProfilePage from './pages/ProfilePage'
+import CitizenRecordsPage from './pages/CitizenRecordsPage'
 
 export default function App() {
   return (
@@ -20,6 +21,8 @@ export default function App() {
       <Route element={<ProtectedLayout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        {/* DEV ONLY — stand-in for DHA's population register */}
+        <Route path="/citizen-records" element={<CitizenRecordsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -80,7 +80,7 @@ Gate 1: JWT valid (signature via JWKS, not expired)? ── NO ──→ 401 INV
 Gate 2: Redis has 2fa:{userId}?      ── NO ──→ 403 REQUIRES_2FA
         ↓ YES
 Gate 3: Redis has face:{userId}?     ── NO ──→ 403 REQUIRES_FACE
-        ↓ YES (and not expired)
+        ↓ YES
 Gateway strips any client-supplied X-User-*/X-Gateway-Secret headers,
 then re-adds its OWN verified X-User-Id / X-User-Email / X-User-Role
 + X-Gateway-Secret, and forwards to the target service
@@ -97,7 +97,7 @@ X-Gateway-Secret matches — otherwise 403, even if reached directly
 |--------------|-----------|---------------------------------------------|
 | JWT session  | 24 hours  | **httpOnly, Secure, SameSite=Lax cookie** (`dha_token`) — never in localStorage, never in a JS-readable response body |
 | 2FA session  | 8 hours   | Redis `2fa:{userId}`                       |
-| Face session | 4 hours   | Redis `face:{userId}`                      |
+| Face session | No TTL — until the next login (cleared by `identity-service` on login), bounded by the JWT | Redis `face:{userId}` |
 
 The JWT moved from a localStorage token to an httpOnly cookie specifically so an XSS on the page can't exfiltrate it — the frontend never sees the token value at all; `AuthStore` only keeps a non-sensitive `dha_authed` localStorage flag to know whether to expect a session across reloads.
 
@@ -107,7 +107,15 @@ The JWT moved from a localStorage token to an httpOnly cookie specifically so an
 Register (sets httpOnly cookie) → OTP Verify (grants 2FA) → SA ID Verify → Face Verify (grants face session) → /welcome
 ```
 
-There is **no separate face-enrollment step**. DHA is simulated as already having the citizen's photo on file — the *first* live scan for a given `userId` silently becomes that on-file record (`face-service`'s `/verify`), and every scan after that is a real 1:1 comparison against it. The citizen only ever sees one "Verify Your Identity" experience.
+Login follows the same path: login → confirm SA ID → Face Verify. Every login needs a fresh face scan, but once verified, the face session doesn't expire on a timer.
+
+**Home Affairs already holds the citizen's record, photo included.** The live scan is always compared against the photo on the citizen's Home Affairs record (`identity-service`, table `citizen_photos`, keyed by the SA ID on their account). Citizens never upload it, and a live scan never becomes the record. With no photo on the record, verification fails closed with `NO_DHA_PHOTO`.
+
+**Not getting stuck:** the Face Verify page has a **Sign out** link, so a citizen who can't finish the scan can log in later and land straight back on Face Verify.
+
+### Citizen Records dev tool (development only)
+
+There's no real population register to connect to, so for development an admin loads citizen records and their ID photos through the **admin dashboard → Citizen Records (dev)** page (`admin@dha.gov.za`, ADMIN role only). The 10 seeded citizens (`CitizenRecordSeeder`) start without photos — upload one for the SA ID you test with, and that citizen can face-verify. In production this data would come from DHA's own systems; this screen and its `/api/auth/admin/citizen-records` endpoints are for development only.
 
 ### Face Verification & Liveness (self-hosted)
 
@@ -200,6 +208,13 @@ Server `.env` must set `BIND_ADDR=0.0.0.0`, `FRONTEND_HOST_PORT=<the agreed port
 >
 > (With the tunnel, leave `PUBLIC_ORIGIN` at `http://localhost:8090` and `WEBAUTHN_RP_ID=localhost`.)
 
+**Loading citizen photos on the server (dev tool):** the admin dashboard isn't part of the server stack. Run it on your laptop against the tunnelled server instead. nginx forwards `/api` to the Gateway, and `http://localhost:8443` is already an allowed WebAuthn origin:
+
+```bash
+ssh -L 8090:localhost:8090 s4352859@172.21.12.21     # tunnel, as above
+cd admin-dashboard && BACKEND_URL=http://localhost:8090 npm run dev
+```
+
 Updating: `git pull && COMPOSE_PARALLEL_LIMIT=1 docker compose build && docker compose up -d`. Containers keep running after you log out.
 
 ---
@@ -240,7 +255,6 @@ GATEWAY_SHARED_SECRET=dev-only-insecure-shared-secret-change-me
 # Never set true in a real deployment.
 OTP_DEV_EXPOSE=true
 
-FACE_SESSION_TTL_HOURS=4
 TWO_FA_TTL_HOURS=8
 
 WEBAUTHN_RP_ID=localhost
@@ -310,6 +324,8 @@ All routes below go through the frontend's nginx as same-origin `/api/...` (or s
 | GET  | `/api/auth/me` | Current user profile |
 | GET  | `/.well-known/jwks.json` | RSA public key, used by other services to verify JWTs directly (STOMP CONNECT frames) |
 | POST | `/api/auth/webauthn/register/options` / `/register/verify` / `/authenticate/options` / `/authenticate/verify` | WebAuthn/passkey support |
+| GET / PUT | `/api/auth/admin/citizen-records` | **Dev only, ADMIN.** List / create-or-update Home Affairs citizen records |
+| PUT / GET / DELETE | `/api/auth/admin/citizen-records/{saId}/photo` | **Dev only, ADMIN.** Upload (multipart, JPG/PNG ≤5MB) / view / remove the record's ID photo |
 
 ### Face verification — `verification-service` (→ `face-service`)
 | Method | Endpoint | Description |
@@ -420,6 +436,7 @@ Ticket numbers reset daily per branch — `queue_entries` has a unique constrain
 - [ ] Configure Redis with an AUTH password
 - [ ] Wire up a real SMS/email provider for OTP delivery (Africa's Talking / Twilio)
 - [ ] Lock CORS to the production frontend domain only (currently `http://localhost:*` + configured `FRONTEND_URL`)
+- [ ] Replace the Citizen Records dev tool with a real population-register integration
 - [ ] Revisit the liveness/face-match vendor choice for iBeta/ISO 30107-3 certification before real citizen use
 - [ ] Rotate/verify referrer-restriction on the Google Maps API key
 

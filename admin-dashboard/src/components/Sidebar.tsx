@@ -1,11 +1,16 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Shield, MapPin, LayoutDashboard, UserCircle, LogOut } from 'lucide-react'
+import { Shield, MapPin, LayoutDashboard, UserCircle, LogOut, IdCard } from 'lucide-react'
 import { useAuthStore } from '../store/AuthStore'
 import { useBranchStore } from '../store/BranchStore'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/profile', label: 'Profile', icon: UserCircle, end: false },
+]
+
+// DEV ONLY — admins load Home Affairs citizen records + photos here.
+const adminNavItems = [
+  { to: '/citizen-records', label: 'Citizen Records (dev)', icon: IdCard, end: false },
 ]
 
 export default function Sidebar() {
@@ -42,7 +47,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
-        {navItems.map(({ to, label, icon: Icon, end }) => (
+        {[...navItems, ...(user?.role === 'ADMIN' ? adminNavItems : [])].map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}

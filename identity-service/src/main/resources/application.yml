@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: identity-service
+  # Citizen ID photos (dev Citizen Records tool) are up to 5MB; Spring's
+  # default 1MB multipart limit would reject most phone photos.
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:identity_db}?useSSL=false&serverTimezone=Africa/Johannesburg&allowPublicKeyRetrieval=true
     username: ${DB_USER:identity_user}

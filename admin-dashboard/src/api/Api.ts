@@ -2,7 +2,7 @@ import api from './Axios'
 import type {
   ApiResponse, AuthResponse, LoginRequest, OtpVerifyRequest,
   ForgotPasswordRequest, ResetPasswordRequest,
-  Branch, BranchStats, QueueEntry, QueueStatus,
+  Branch, BranchStats, QueueEntry, QueueStatus, CitizenRecord,
 } from '../types'
 
 // ── AUTH ──────────────────────────────────────────────
@@ -62,4 +62,27 @@ export const queueService = {
     api.put<ApiResponse<QueueEntry>>(`/queue/${entryId}/advance`, null, {
       params: { status, ...(counter ? { counter } : {}) },
     }),
+}
+
+// ── CITIZEN RECORDS (DEV ONLY — admin stand-in for DHA's population register) ──
+export const citizenRecordService = {
+  list: () =>
+    api.get<ApiResponse<CitizenRecord[]>>('/auth/admin/citizen-records'),
+
+  save: (record: Omit<CitizenRecord, 'hasPhoto'> & { hasPhoto?: boolean }) =>
+    api.put<ApiResponse<CitizenRecord>>('/auth/admin/citizen-records', record),
+
+  uploadPhoto: (saIdNumber: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.put<ApiResponse<null>>(`/auth/admin/citizen-records/${saIdNumber}/photo`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
+  getPhoto: (saIdNumber: string) =>
+    api.get<Blob>(`/auth/admin/citizen-records/${saIdNumber}/photo`, { responseType: 'blob' }),
+
+  deletePhoto: (saIdNumber: string) =>
+    api.delete<ApiResponse<null>>(`/auth/admin/citizen-records/${saIdNumber}/photo`),
 }
