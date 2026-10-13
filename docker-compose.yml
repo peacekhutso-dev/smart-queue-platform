@@ -8,7 +8,8 @@
 # No fixed container names, so several instances can run side by side under
 # different project names (docker compose -p <group> ...).
 #
-# Memory ceiling for the whole stack: ~7.9 GB (sum of per-service limits).
+# Memory ceiling for the whole stack: ~7.9 GB (sum of per-service limits);
+# face-service (DeepFace + PyTorch liveness) alone gets 2.5 GB.
 # Local dev extras (gateway on :8080 for Vite, MySQL on a host port):
 # docker-compose.dev.yml.
 
@@ -37,7 +38,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     command:
-      - --innodb-buffer-pool-size=256M
+      - --innodb-buffer-pool-size=160M
       - --performance-schema=OFF
     environment:
       MYSQL_DATABASE: ${DB_NAME:-smart_queue}
@@ -64,7 +65,7 @@ services:
       retries: 10
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 640m }
+        limits: { cpus: "1.0", memory: 512m }
 
   # Payment gets its own isolated MySQL instance/credentials — tighter
   # backup/audit/access policy for payment data.
@@ -73,7 +74,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     command:
-      - --innodb-buffer-pool-size=128M
+      - --innodb-buffer-pool-size=64M
       - --performance-schema=OFF
     environment:
       MYSQL_DATABASE: ${PAYMENT_DB_NAME:-payment_db}
@@ -89,13 +90,13 @@ services:
       retries: 10
     deploy:
       resources:
-        limits: { cpus: "0.5", memory: 384m }
+        limits: { cpus: "0.5", memory: 256m }
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     logging: *default-logging
-    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "noeviction"]
+    command: ["redis-server", "--maxmemory", "96mb", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -105,7 +106,7 @@ services:
       retries: 5
     deploy:
       resources:
-        limits: { cpus: "0.25", memory: 256m }
+        limits: { cpus: "0.25", memory: 128m }
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -121,7 +122,7 @@ services:
       retries: 5
     deploy:
       resources:
-        limits: { cpus: "0.5", memory: 384m }
+        limits: { cpus: "0.5", memory: 320m }
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.116.1
@@ -431,7 +432,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     deploy:
       resources:
-        limits: { cpus: "0.5", memory: 384m }
+        limits: { cpus: "0.5", memory: 320m }
 
   # Heaviest service: DeepFace (Facenet512) CPU inference + anti-spoofing.
   # Thread counts pinned so TensorFlow doesn't spawn one thread per host core.
@@ -447,9 +448,14 @@ services:
       TF_NUM_INTRAOP_THREADS: "2"
       TF_NUM_INTEROP_THREADS: "1"
       TF_CPP_MIN_LOG_LEVEL: "2"
+      # Caps glibc's per-thread malloc arenas — TensorFlow + PyTorch threads
+      # otherwise each grow their own, inflating resident memory.
+      MALLOC_ARENA_MAX: "2"
     deploy:
       resources:
-        limits: { cpus: "1.5", memory: 2g }
+        # 2g was OOM-killed (exit 137) during a verify. Images are now also
+        # downscaled before inference (main.py MAX_IMAGE_SIDE).
+        limits: { cpus: "1.5", memory: 2560m }
 
   # ───────────────────────── Frontend ─────────────────────────
 
