@@ -29,7 +29,7 @@ import logging
 import numpy as np
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel
 from deepface import DeepFace
 
@@ -69,7 +69,7 @@ def require_gateway_secret(x_gateway_secret: str | None = Header(default=None)):
 class FaceRequest(BaseModel):
     userId: str
     imageBase64: str            # live capture from the citizen's camera
-    referenceImageBase64: str   # the on-file DHA record photo (from their verified ID document)
+    referenceImageBase64: str   # the photo on the citizen's Home Affairs record (identity-service)
 
 
 class LivenessRequest(BaseModel):
@@ -78,12 +78,22 @@ class LivenessRequest(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+# Longest side, in pixels, of any image handed to DeepFace / the liveness
+# models. Citizen record photos are stored as uploaded — a 12MP phone photo
+# is ~36MB as an RGB array, and detection makes several full-size copies of
+# it, which OOM-killed this container at its memory limit. Facenet512 only
+# sees a 160x160 face crop anyway, so this costs no accuracy.
+MAX_IMAGE_SIDE = int(os.getenv("FACE_MAX_IMAGE_SIDE", "1024"))
+
+
 def decode_image(b64: str) -> np.ndarray:
-    """Decode a base64 (or data-URI) image to a numpy RGB array."""
+    """Decode a base64 (or data-URI) image to a numpy RGB array, upright
+    (phone photos carry their rotation in EXIF) and downscaled."""
     if "," in b64:
         b64 = b64.split(",", 1)[1]
     raw = base64.b64decode(b64)
-    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+    img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
     return np.array(img)
 
 
@@ -118,10 +128,9 @@ def verify(req: FaceRequest):
     """Compare a live capture against the DHA record (reference) photo.
 
     Both images arrive on every call — nothing is persisted or enrolled
-    here. verification-service is responsible for fetching the reference
-    photo (the citizen's verified ID document photo) from document-service
-    fresh each time and is what enforces that a userId with no such document
-    on file gets rejected before ever reaching this endpoint.
+    here. verification-service fetches the reference photo (the photo on the
+    citizen's Home Affairs record) from identity-service fresh each time, and
+    rejects a userId with no photo on file before ever reaching this endpoint.
     """
     try:
         live_embedding = get_embedding(decode_image(req.imageBase64))
