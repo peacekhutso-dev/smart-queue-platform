@@ -1,0 +1,19 @@
+# LOAD-TEST OVERLAY — turns the Zero Trust gates OFF so the load-testing agent's
+# fake citizens/staff can use the API with just a login (no OTP, SA ID
+# confirmation, face scan or fingerprint). Never leave this on: while it's
+# active, any account gets past every gate.
+#
+#   On:   docker compose -f docker-compose.yml -f docker-compose.loadtest.yml up -d
+#   Off:  docker compose up -d
+#
+# Note: with the face bypass on, face-service (DeepFace) is never exercised,
+# so this test doesn't measure its load.
+
+services:
+  api-gateway:
+    environment:
+      ZERO_TRUST_BYPASS: "true"
+
+  verification-service:
+    environment:
+      FACE_DEV_BYPASS: "true"
