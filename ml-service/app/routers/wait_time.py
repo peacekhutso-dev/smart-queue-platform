@@ -5,6 +5,7 @@ FastAPI router — no training logic here.
 """
 import json
 from datetime import datetime
+from typing import Optional
 from pathlib import Path
 
 import joblib
@@ -31,6 +32,10 @@ class WaitTimeRequest(BaseModel):
     # derivable from a clock, unlike hour/day_of_week/is_weekend below.
     patients_in_system: int = Field(ge=0)
     arrivals_last_60min: int = Field(ge=0)
+    # Test hook (TestLab's ML mode): predict as if the citizen joined at this
+    # moment, so time-of-day/day-of-week can be tested. Omitted -> now, which
+    # is all queue-service ever sends.
+    at: Optional[datetime] = None
 
 
 class WaitTimeResponse(BaseModel):
@@ -41,7 +46,7 @@ class WaitTimeResponse(BaseModel):
 
 @router.post("/wait-time", response_model=WaitTimeResponse)
 def predict_wait_time(request: WaitTimeRequest):
-    now = datetime.now()
+    now = request.at or datetime.now()
 
     features = {
         "hour": now.hour,
