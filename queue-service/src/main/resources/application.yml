@@ -1,5 +1,11 @@
 server:
   port: 8088
+  # Tomcat defaults to 200 request threads; each costs ~1 MB of native memory,
+  # which a 512 MB container can't afford under load. Extra requests queue.
+  tomcat:
+    threads:
+      max: 48
+    accept-count: 200
 
 spring:
   application:

@@ -141,7 +141,7 @@ services:
     build:
       context: ./payment-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       payment-mysql:
@@ -159,14 +159,14 @@ services:
       RABBITMQ_PORT: 5672
     deploy:
       resources:
-        limits: { cpus: "0.5", memory: 384m }
+        limits: { cpus: "0.5", memory: 320m }
 
   # WebSocket push to the browser, fed by RabbitMQ.
   notification-gateway:
     build:
       context: ./notification-gateway
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       rabbitmq:
@@ -179,13 +179,13 @@ services:
       FRONTEND_URL: ${PUBLIC_ORIGIN:-http://localhost:${FRONTEND_HOST_PORT:-5173}}
     deploy:
       resources:
-        limits: { cpus: "0.25", memory: 384m }
+        limits: { cpus: "0.25", memory: 320m }
 
   identity-service:
     build:
       context: ./identity-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       mysql:
@@ -219,7 +219,7 @@ services:
     build:
       context: ./verification-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       redis:
@@ -247,7 +247,7 @@ services:
     build:
       context: ./branch-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       mysql:
@@ -271,7 +271,7 @@ services:
     build:
       context: ./queue-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       mysql:
@@ -303,13 +303,13 @@ services:
       QUEUE_SKIP_DOCUMENT_CHECK: ${QUEUE_SKIP_DOCUMENT_CHECK:-true}
     deploy:
       resources:
-        limits: { cpus: "0.5", memory: 384m }
+        limits: { cpus: "0.5", memory: 512m }
 
   document-service:
     build:
       context: ./document-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       mysql:
@@ -339,7 +339,7 @@ services:
     build:
       context: ./feedback-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       mysql:
@@ -362,7 +362,7 @@ services:
     build:
       context: ./catalog-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       mysql:
@@ -386,7 +386,7 @@ services:
     build:
       context: ./api-gateway
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       - payment-service
@@ -425,7 +425,7 @@ services:
     build:
       context: ./ml-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     environment:
       <<: *common-env
@@ -440,7 +440,7 @@ services:
     build:
       context: ./face-service
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     environment:
       <<: *common-env
@@ -465,7 +465,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    restart: on-failure:5
+    restart: unless-stopped
     logging: *default-logging
     depends_on:
       - api-gateway

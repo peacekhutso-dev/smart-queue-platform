@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -25,8 +27,28 @@ import java.util.Map;
 public class QrCodeService {
 
     private static final int SIZE_PX = 240;
+    // A ticket's QR content never changes, so each image is rendered once and
+    // reused (citizens poll their ticket every few seconds). Bounded LRU: ~2-3KB
+    // per image, so at most a few MB.
+    private static final int CACHE_SIZE = 2000;
+    private final Map<String, String> cache = Collections.synchronizedMap(
+            new LinkedHashMap<>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                    return size() > CACHE_SIZE;
+                }
+            });
 
     public String generateDataUri(String content) {
+        if (content == null) return null;
+        String cached = cache.get(content);
+        if (cached != null) return cached;
+        String uri = render(content);
+        if (uri != null) cache.put(content, uri);
+        return uri;
+    }
+
+    private String render(String content) {
         try {
             Map<EncodeHintType, Object> hints = Map.of(
                     EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M,
