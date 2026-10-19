@@ -192,7 +192,8 @@ public class QueueService {
         List<QueueEntry> entries = queueEntryRepository.findByBranchIdAndStatusInOrderByJoinedAtAsc(branchId, ACTIVE_STATUSES);
         long total = queueEntryRepository.countByBranchIdAndStatusIn(branchId, ACTIVE_STATUSES);
         return entries.stream()
-                .map(entry -> mapToResponse(entry, branch, total))
+                // staff view: no per-entry QR image (only the citizen's own ticket shows it)
+                .map(entry -> mapToResponse(entry, branch, total, false))
                 .toList();
     }
 
@@ -234,7 +235,7 @@ public class QueueService {
                 // for this branch, so its size is the total-in-queue count — no
                 // need for mapToResponse to run a separate COUNT query per entry.
                 .topEntries(active.stream().limit(10)
-                        .map(e -> mapToResponse(e, branch, active.size()))
+                        .map(e -> mapToResponse(e, branch, active.size(), false))
                         .peek(r -> { r.setQrCode(null); r.setQrCodeImage(null); })
                         .toList())
                 .timestamp(LocalDateTime.now())
@@ -331,6 +332,14 @@ public class QueueService {
     // re-querying it once per entry — mapping N entries for the same branch
     // previously ran N identical COUNT queries.
     private QueueEntryResponse mapToResponse(QueueEntry entry, BranchInfo branch, long totalInQueue) {
+        return mapToResponse(entry, branch, totalInQueue, true);
+    }
+
+    // withQrImage=false skips rendering the QR PNG: the staff branch list and
+    // the branch broadcast never show it, and rendering one per entry on every
+    // poll/broadcast was what exhausted queue-service's memory under load.
+    private QueueEntryResponse mapToResponse(QueueEntry entry, BranchInfo branch, long totalInQueue,
+                                             boolean withQrImage) {
         return QueueEntryResponse.builder()
                 .id(entry.getId())
                 .ticketNumber(entry.getTicketNumber())
@@ -340,7 +349,7 @@ public class QueueService {
                 .estimatedWaitMinutes(entry.getEstimatedWaitMinutes())
                 .counterNumber(entry.getCounterNumber())
                 .qrCode(entry.getQrCode())
-                .qrCodeImage(qrCodeService.generateDataUri(entry.getQrCode()))
+                .qrCodeImage(withQrImage ? qrCodeService.generateDataUri(entry.getQrCode()) : null)
                 .branchId(entry.getBranchId())
                 .branchName(branch.name())
                 .branchAddress(branch.address())
