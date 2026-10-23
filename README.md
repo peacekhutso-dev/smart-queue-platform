@@ -208,8 +208,6 @@ Server `.env` must set `BIND_ADDR=0.0.0.0`, `FRONTEND_HOST_PORT=<the agreed port
 >
 > (With the tunnel, leave `PUBLIC_ORIGIN` at `http://localhost:8090` and `WEBAUTHN_RP_ID=localhost`.)
 
-**Load testing:** `docker-compose.loadtest.yml` turns off the Zero Trust gates (`ZERO_TRUST_BYPASS`, `FACE_DEV_BYPASS`), so a load-testing agent's fake users only need to log in. Turn it on with `docker compose -f docker-compose.yml -f docker-compose.loadtest.yml up -d`, and off again with plain `docker compose up -d`. Never leave it on: while it's active, any account gets past every gate.
-
 **Loading citizen photos on the server (dev tool):** the admin dashboard isn't part of the server stack. Run it on your laptop against the tunnelled server instead. nginx forwards `/api` to the Gateway, and `http://localhost:8443` is already an allowed WebAuthn origin:
 
 ```bash
