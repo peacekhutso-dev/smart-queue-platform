@@ -24,6 +24,7 @@ import reactor.core.publisher.Mono;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Centralizes what used to be split across the monolith's JwtAuthFilter +
@@ -111,13 +112,22 @@ public class ZeroTrustGlobalFilter implements GlobalFilter, Ordered {
 
         boolean skipGates2And3 = devBypass || matches(path, GATE1_ONLY_PREFIXES);
 
+        // Only a failed JWT check is a 401. The error handler wraps verify()
+        // alone, so a downstream failure (service down, Redis error) surfaces
+        // as its own 5xx instead of an INVALID_TOKEN that logs the user out.
         return jwtVerifier.verify(token)
-                .flatMap(identity -> skipGates2And3
-                        ? forward(exchange, chain, identity)
-                        : enforceZeroTrustGates(exchange, chain, identity))
+                .map(Optional::of)
                 .onErrorResume(e -> {
                     log.warn("JWT verification failed path={} reason={}", path, e.getMessage());
-                    return reject(exchange, HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "Invalid or expired token");
+                    return Mono.just(Optional.empty());
+                })
+                .flatMap(identity -> {
+                    if (identity.isEmpty()) {
+                        return reject(exchange, HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "Invalid or expired token");
+                    }
+                    return skipGates2And3
+                            ? forward(exchange, chain, identity.get())
+                            : enforceZeroTrustGates(exchange, chain, identity.get());
                 });
     }
 
